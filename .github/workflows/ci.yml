@@ -1,0 +1,28 @@
+name: macOS CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Check repository for credential patterns
+        run: ./scripts/check-secrets.sh
+      - name: Build
+        run: swift build
+      - name: Test
+        run: swift test
+      - name: Package development app
+        run: ./scripts/package-app.sh
+      - name: Verify code signature
+        run: codesign --verify --deep --strict --verbose=2 "dist/FPGA Studio.app"

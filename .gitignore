@@ -1,0 +1,30 @@
+.DS_Store
+.build/
+.swiftpm/
+*.xcodeproj/xcuserdata/
+DerivedData/
+.fpga/
+*.app/
+dist/
+ToolchainPayload/
+Toolchains/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p8
+*.p12
+*.cer
+*.mobileprovision
+*.provisionprofile
+*.xcconfig.local
+secrets.*
+
+# Generated toolchain and release archives belong in GitHub Releases
+*.zip
+*.tar
+*.tar.gz
+*.dmg

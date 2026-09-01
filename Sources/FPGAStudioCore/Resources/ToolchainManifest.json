@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "version": "2026.09.1",
+  "architecture": "arm64",
+  "minimumMacOS": "15.0",
+  "archiveSHA256": null,
+  "archiveSignature": null,
+  "signingPublicKey": null,
+  "tools": [
+    {"name":"Yosys","executable":"yosys","version":"pinned-release","sourceRevision":"release","license":"ISC","requiredFor":["validation","synthesis"]},
+    {"name":"nextpnr-mistral","executable":"nextpnr-mistral","version":"pinned-release","sourceRevision":"release","license":"ISC","requiredFor":["place-and-route","bitstream"]},
+    {"name":"Mistral","executable":"mistral-cv","version":"pinned-release","sourceRevision":"release","license":"BSD-3-Clause","requiredFor":["Cyclone V device database"]},
+    {"name":"openFPGALoader","executable":"openFPGALoader","version":"pinned-release","sourceRevision":"release","license":"Apache-2.0","requiredFor":["SRAM programming","flash programming"]},
+    {"name":"Icarus Verilog","executable":"iverilog","version":"pinned-release","sourceRevision":"release","license":"GPL-2.0-or-later","requiredFor":["Verilog simulation"]},
+    {"name":"Verilator","executable":"verilator","version":"pinned-release","sourceRevision":"release","license":"LGPL-3.0-or-later OR Artistic-2.0","requiredFor":["Verilog lint"]},
+    {"name":"GHDL","executable":"ghdl","version":"pinned-release","sourceRevision":"release","license":"GPL-2.0-or-later","requiredFor":["VHDL simulation","VHDL synthesis"]}
+  ]
+}

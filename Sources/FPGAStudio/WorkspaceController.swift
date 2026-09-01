@@ -1,0 +1,366 @@
+import AppKit
+import Combine
+import CryptoKit
+import FPGAStudioCore
+import Foundation
+
+struct SourceDocument: Identifiable, Hashable {
+    let id: String
+    let url: URL
+    var language: HDLLanguage
+    var text: String
+    var isDirty = false
+
+    var title: String { url.lastPathComponent }
+}
+
+@MainActor
+final class WorkspaceController: ObservableObject {
+    @Published var project: FPGAProject?
+    @Published var rootURL: URL?
+    @Published var documents: [SourceDocument] = []
+    @Published var selectedDocumentID: String?
+    @Published var selectedTestID: String?
+    @Published var selectedBottomTab = "Issues"
+    @Published var searchText = ""
+    @Published var log = ""
+    @Published var diagnostics: [Diagnostic] = []
+    @Published var artifacts: [BuildArtifact] = []
+    @Published var waveform: VCDDocument?
+    @Published var stage: BuildStage = .idle
+    @Published var isRunning = false
+    @Published var boardConnected = false
+    @Published var showingNewProject = false
+    @Published var showingFlashConfirmation = false
+    @Published var showingSimulationTrust = false
+    @Published var showingInspector = true
+    @Published var toolHealth: [ToolHealth] = []
+    @Published var lastError: String?
+    @Published private(set) var constraintsRevision = 0
+    @Published private(set) var flashCandidate: ProgrammingArtifact?
+
+    let board: BoardProfile
+    private let pipeline = BuildPipeline()
+    private let toolchain = ToolchainManager()
+    private var operation: Task<Void, Never>?
+    private var powerActivity: NSObjectProtocol?
+
+    init() {
+        do { board = try BundledResources.boardProfile() }
+        catch { fatalError("Bundled C5G board profile is invalid: \(error)") }
+        refreshToolchain()
+    }
+
+    var selectedDocument: SourceDocument? {
+        documents.first { $0.id == selectedDocumentID }
+    }
+
+    var canRun: Bool { project != nil && !isRunning && !(project?.isReadOnly ?? true) }
+    var canSimulate: Bool { canRun && !(project?.tests.isEmpty ?? true) }
+    var canCancel: Bool { isRunning && stage != .programmingFlash }
+
+    var recentProjects: [URL] {
+        (UserDefaults.standard.stringArray(forKey: "recentProjects") ?? []).map(URL.init(fileURLWithPath:))
+            .filter { FileManager.default.fileExists(atPath: $0.appendingPathComponent(ProjectStore.manifestName).path) }
+    }
+
+    func chooseProject() {
+        let panel = NSOpenPanel()
+        panel.title = "Open FPGA Project"
+        panel.prompt = "Open"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let url = panel.url { openProject(at: url) }
+    }
+
+    func openProject(at url: URL) {
+        do {
+            saveAll()
+            let loaded = try ProjectStore.load(from: url)
+            project = loaded
+            rootURL = url
+            selectedTestID = loaded.tests.first?.id
+            documents = []
+            selectedDocumentID = nil
+            diagnostics = ProjectValidator.validate(project: loaded, root: url, board: board)
+            remember(url)
+            if let first = loaded.sources.first { openSource(first) }
+        } catch { lastError = error.localizedDescription }
+    }
+
+    func closeProject() {
+        saveAll()
+        project = nil
+        rootURL = nil
+        documents = []
+        selectedDocumentID = nil
+        waveform = nil
+        log = ""
+    }
+
+    func createProject(template: ProjectTemplate, language: HDLLanguage, name: String, parent: URL) {
+        do {
+            let safeName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !safeName.isEmpty, !safeName.contains("/") else { throw FPGAStudioError.invalidProject("Choose a simple project name.") }
+            let destination = parent.appendingPathComponent(safeName, isDirectory: true)
+            _ = try ProjectTemplateFactory.create(template, language: language, name: safeName, at: destination)
+            showingNewProject = false
+            openProject(at: destination)
+        } catch { lastError = error.localizedDescription }
+    }
+
+    func openSource(_ source: ProjectSource) {
+        guard let rootURL else { return }
+        do {
+            let url = try ProjectStore.resolve(source.path, under: rootURL)
+            if !documents.contains(where: { $0.id == source.path }) {
+                documents.append(.init(id: source.path, url: url, language: source.language, text: try String(contentsOf: url, encoding: .utf8)))
+            }
+            selectedDocumentID = source.path
+        } catch { lastError = error.localizedDescription }
+    }
+
+    func updateSelectedText(_ text: String) {
+        guard let id = selectedDocumentID, let index = documents.firstIndex(where: { $0.id == id }) else { return }
+        documents[index].text = text
+        documents[index].isDirty = true
+        do {
+            try Data(text.utf8).write(to: documents[index].url, options: .atomic)
+            documents[index].isDirty = false
+        } catch { lastError = error.localizedDescription }
+    }
+
+    func saveAll() {
+        for index in documents.indices where documents[index].isDirty {
+            do {
+                try Data(documents[index].text.utf8).write(to: documents[index].url, options: .atomic)
+                documents[index].isDirty = false
+            } catch { lastError = error.localizedDescription }
+        }
+    }
+
+    func simulateSelectedTest() {
+        guard isCurrentProjectTrusted else {
+            showingSimulationTrust = true
+            return
+        }
+        runSelectedTest()
+    }
+
+    func trustProjectAndSimulate() {
+        guard let trustIdentifier else { return }
+        var trusted = Set(UserDefaults.standard.stringArray(forKey: "trustedSimulationProjects") ?? [])
+        trusted.insert(trustIdentifier)
+        UserDefaults.standard.set(Array(trusted), forKey: "trustedSimulationProjects")
+        showingSimulationTrust = false
+        runSelectedTest()
+    }
+
+    private func runSelectedTest() {
+        guard let project else { return }
+        let test = project.tests.first(where: { $0.id == selectedTestID }) ?? project.tests.first
+        guard let test else { return }
+        perform(.simulate(test: test))
+    }
+
+    func perform(_ action: BuildAction) {
+        guard let project, let rootURL, !isRunning else { return }
+        saveAll()
+        isRunning = true
+        log = ""
+        diagnostics = []
+        artifacts = []
+        selectedBottomTab = action.isSimulation ? "Simulation" : "Build Log"
+        if action.isFlash {
+            AppLifecycleDelegate.flashWriteActive = true
+            powerActivity = ProcessInfo.processInfo.beginActivity(options: [.idleSystemSleepDisabled, .suddenTerminationDisabled, .userInitiated], reason: "Programming C5G persistent flash")
+        }
+        operation = Task { [weak self] in
+            guard let self else { return }
+            let outcome = await pipeline.run(action: action, project: project, root: rootURL, board: board) { stage, message in
+                Task { @MainActor [weak self] in
+                    self?.stage = stage == .idle ? self?.stage ?? .idle : stage
+                    self?.log.append(message)
+                }
+            }
+            guard !Task.isCancelled else { self.finishOperation(); return }
+            diagnostics = outcome.diagnostics
+            artifacts = outcome.artifacts
+            log.append(outcome.log)
+            stage = outcome.stage
+            if case .detectDevice = action { boardConnected = outcome.succeeded }
+            if action.isSimulation,
+               let artifact = outcome.artifacts.first(where: { $0.kind.contains("VCD") }),
+               let parsed = try? VCDParser.parse(url: URL(fileURLWithPath: artifact.path)) {
+                waveform = parsed
+                selectedBottomTab = "Waveform"
+            }
+            if !outcome.succeeded { selectedBottomTab = "Issues" }
+            finishOperation()
+        }
+    }
+
+    func prepareFlash() {
+        guard let url = latestBitstream else { lastError = FPGAStudioError.noBitstream.localizedDescription; return }
+        do {
+            let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+            let values = try url.resourceValues(forKeys: [.contentModificationDateKey])
+            flashCandidate = ProgrammingArtifact(
+                url: url,
+                sha256: SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined(),
+                byteCount: data.count,
+                modifiedAt: values.contentModificationDate ?? Date()
+            )
+            showingFlashConfirmation = true
+        } catch { lastError = error.localizedDescription }
+    }
+
+    func confirmFlash() {
+        guard let flashCandidate else { lastError = FPGAStudioError.noBitstream.localizedDescription; return }
+        showingFlashConfirmation = false
+        perform(.programFlash(artifact: flashCandidate))
+    }
+
+    func cancel() {
+        guard canCancel else { return }
+        operation?.cancel()
+        Task { await pipeline.cancel() }
+        finishOperation()
+    }
+
+    var latestBitstream: URL? {
+        if let artifact = artifacts.last(where: { $0.kind.contains("RBF") }) { return URL(fileURLWithPath: artifact.path) }
+        guard let rootURL else { return nil }
+        let release = rootURL.appendingPathComponent(".fpga/build/release")
+        let entries = (try? FileManager.default.contentsOfDirectory(at: release, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        return entries.filter { $0.pathExtension.lowercased() == "rbf" }.sorted {
+            let left = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            let right = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            return left > right
+        }.first
+    }
+
+    var bitstreamSHA256: String {
+        flashCandidate?.sha256 ?? "Unavailable"
+    }
+
+    var constraintAssignments: [PinAssignment] {
+        guard let project, let rootURL,
+              let url = try? ProjectStore.resolve(project.constraints, under: rootURL),
+              let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        return QSFParser.parse(text)
+    }
+
+    var topPortDirections: [String: PinDirection] {
+        guard let project, let rootURL else { return [:] }
+        var result: [String: PinDirection] = [:]
+        for source in project.sources where !source.isTestbench {
+            guard let url = try? ProjectStore.resolve(source.path, under: rootURL),
+                  let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            result.merge(SourcePortExtractor.portDirections(in: text, language: source.language, top: project.top)) { existing, _ in existing }
+        }
+        return result
+    }
+
+    func assign(_ signal: String, to pin: BoardPin) {
+        guard let project, let rootURL else { return }
+        let current = constraintAssignments
+        if let conflict = current.first(where: { $0.packagePin == pin.packagePin && $0.signal != signal }) {
+            lastError = "\(pin.packagePin) is already assigned to \(conflict.signal). Choose another pin first."
+            return
+        }
+        let base = signal.split(separator: "[").first.map(String.init) ?? signal
+        if let direction = topPortDirections[base], direction != .bidirectional, pin.direction != .bidirectional, direction != pin.direction {
+            lastError = "\(signal) is a top-level \(direction.rawValue), but \(pin.signal) is a board \(pin.direction.rawValue)."
+            return
+        }
+        do {
+            let url = try ProjectStore.resolve(project.constraints, under: rootURL)
+            var lines = try String(contentsOf: url, encoding: .utf8).components(separatedBy: .newlines)
+            let escaped = NSRegularExpression.escapedPattern(for: signal)
+            let location = try NSRegularExpression(pattern: #"^\s*set_location_assignment\s+PIN_[A-Z0-9]+\s+-to\s+\"?"# + escaped + #"\"?\s*$"#)
+            let standard = try NSRegularExpression(pattern: #"^\s*set_instance_assignment\s+-name\s+IO_STANDARD\s+.+?\s+-to\s+\"?"# + escaped + #"\"?\s*$"#, options: .caseInsensitive)
+            var locationFound = false
+            var standardFound = false
+            for index in lines.indices {
+                let range = NSRange(lines[index].startIndex..<lines[index].endIndex, in: lines[index])
+                if location.firstMatch(in: lines[index], range: range) != nil {
+                    lines[index] = "set_location_assignment \(pin.packagePin) -to \(signal)"
+                    locationFound = true
+                } else if standard.firstMatch(in: lines[index], range: range) != nil {
+                    lines[index] = "set_instance_assignment -name IO_STANDARD \"\(pin.ioStandard)\" -to \(signal)"
+                    standardFound = true
+                }
+            }
+            if !locationFound { lines.append("set_location_assignment \(pin.packagePin) -to \(signal)") }
+            if !standardFound { lines.append("set_instance_assignment -name IO_STANDARD \"\(pin.ioStandard)\" -to \(signal)") }
+            try Data(lines.joined(separator: "\n").utf8).write(to: url, options: .atomic)
+            constraintsRevision += 1
+            diagnostics = ProjectValidator.validate(project: project, root: rootURL, board: board)
+        } catch { lastError = error.localizedDescription }
+    }
+
+    func refreshToolchain() {
+        Task {
+            do {
+                let manifest = try BundledResources.toolchainManifest()
+                var health = await toolchain.health(manifest: manifest)
+                if health.contains(where: { !$0.isAvailable }), try await toolchain.installBundledBootstrapIfAvailable(manifest: manifest) {
+                    health = await toolchain.health(manifest: manifest)
+                }
+                toolHealth = health
+            } catch { lastError = error.localizedDescription }
+        }
+    }
+
+    func chooseToolchainArchive() {
+        let panel = NSOpenPanel()
+        panel.title = "Install Managed FPGA Toolchain"
+        panel.allowedContentTypes = [.zip]
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let archive = panel.url else { return }
+        Task {
+            do {
+                let manifest = try BundledResources.toolchainManifest()
+                try await toolchain.install(archive: archive, manifest: manifest)
+                toolHealth = await toolchain.health(manifest: manifest)
+            } catch { lastError = error.localizedDescription }
+        }
+    }
+
+    private func finishOperation() {
+        if let powerActivity { ProcessInfo.processInfo.endActivity(powerActivity); self.powerActivity = nil }
+        AppLifecycleDelegate.flashWriteActive = false
+        isRunning = false
+        operation = nil
+    }
+
+    private var trustIdentifier: String? {
+        guard let rootURL else { return nil }
+        return SHA256.hash(data: Data(rootURL.standardizedFileURL.path.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private var isCurrentProjectTrusted: Bool {
+        guard let trustIdentifier else { return false }
+        return Set(UserDefaults.standard.stringArray(forKey: "trustedSimulationProjects") ?? []).contains(trustIdentifier)
+    }
+
+    private func remember(_ url: URL) {
+        var paths = recentProjects.map(\.path).filter { $0 != url.path }
+        paths.insert(url.path, at: 0)
+        UserDefaults.standard.set(Array(paths.prefix(8)), forKey: "recentProjects")
+        objectWillChange.send()
+    }
+}
+
+private extension BuildAction {
+    var isSimulation: Bool {
+        if case .simulate = self { return true }
+        return false
+    }
+    var isFlash: Bool {
+        if case .programFlash(_) = self { return true }
+        return false
+    }
+}
