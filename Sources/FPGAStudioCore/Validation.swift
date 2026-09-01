@@ -63,7 +63,7 @@ public enum QSFParser {
                 diagnostics.append(.init(severity: .error, message: "\(assignment.signal) is a top-level \(direction.rawValue), but \(pin) is validated as \(known.direction.rawValue) for \(known.signal).", line: assignment.line, tool: "Constraints"))
             }
             if let standard = assignment.ioStandard, standard.caseInsensitiveCompare(known.ioStandard) != .orderedSame {
-                diagnostics.append(.init(severity: .warning, message: "\(assignment.signal) uses \(standard); validated \(known.signal) uses \(known.ioStandard).", line: assignment.line, tool: "Constraints"))
+                diagnostics.append(.init(severity: .error, message: "\(assignment.signal) uses \(standard); validated \(known.signal) uses \(known.ioStandard).", line: assignment.line, tool: "Constraints"))
             }
         }
         for port in requiredPorts where !usedSignals.keys.contains(where: { $0 == port || $0.hasPrefix(port + "[") }) {
