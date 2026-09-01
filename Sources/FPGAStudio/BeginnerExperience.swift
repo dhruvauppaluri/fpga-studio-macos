@@ -200,7 +200,7 @@ struct GuidedNextStepView: View {
         case .connect:
             Button("Detect Board") { workspace.perform(.detectDevice) }.buttonStyle(.borderedProminent).disabled(!workspace.canRun)
         case .programSRAM:
-            Button("Program SRAM") { workspace.perform(.programSRAM) }.buttonStyle(.borderedProminent).disabled(!workspace.canProgramSRAM)
+            Button("Program SRAM") { workspace.programSRAM() }.buttonStyle(.borderedProminent).disabled(!workspace.canProgramSRAM)
         case .complete:
             Button("Open Learn Center") { workspace.showingLearnCenter = true }
         }

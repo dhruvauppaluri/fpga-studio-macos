@@ -37,10 +37,10 @@ struct FPGAStudioApp: App {
                     .keyboardShortcut("b", modifiers: [.command])
                     .disabled(!workspace.canRun)
                 Divider()
-                Button("Program SRAM") { workspace.perform(.programSRAM) }
+                Button("Program SRAM") { workspace.programSRAM() }
                     .disabled(!workspace.canProgramSRAM)
                 Button("Program Flash…") { workspace.prepareFlash() }
-                    .disabled(!workspace.canRun)
+                    .disabled(!workspace.canProgramFlash)
                 Divider()
                 Button("Cancel Operation") { workspace.cancel() }
                     .disabled(!workspace.canCancel)

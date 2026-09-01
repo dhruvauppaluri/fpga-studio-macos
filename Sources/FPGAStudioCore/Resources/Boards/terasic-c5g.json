@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "terasic-c5g",
   "displayName": "Cyclone V GX Starter Kit",
   "vendor": "Terasic",
@@ -7,6 +7,10 @@
   "device": "5CGXFC5C6F27C7",
   "packageDevice": "5CGXFC5C6F27C7N",
   "programmerBoard": "c5g",
+  "expectedJTAGIDCodes": ["0x02b020dd"],
+  "expectedJTAGModels": ["5CGT*5/5CGX*5"],
+  "sramProgramming": "validated",
+  "flashProgramming": "not-tested",
   "maturity": "experimental",
   "experimentalNotice": "Cyclone V support in nextpnr-mistral is experimental. Logic, registers, clocks, and basic I/O are the supported v1 path.",
   "pins": [

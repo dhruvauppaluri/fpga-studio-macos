@@ -50,13 +50,15 @@ struct WorkspaceView: View {
                 .disabled(!workspace.canRun)
                 .help("Create a Cyclone V bitstream from the current HDL design.")
             Divider()
-            Button { workspace.perform(.programSRAM) } label: { Label("Program SRAM", systemImage: "bolt.horizontal.circle") }
+            Button { workspace.programSRAM() } label: { Label("Program SRAM", systemImage: "bolt.horizontal.circle") }
                 .disabled(!workspace.canProgramSRAM)
                 .help("Load the bitstream temporarily. It clears when the board loses power.")
             Menu {
-                Button("Program SRAM") { workspace.perform(.programSRAM) }
+                Button("Program SRAM") { workspace.programSRAM() }
+                    .disabled(!workspace.canProgramSRAM)
                 Divider()
                 Button("Program Flash…") { workspace.prepareFlash() }
+                    .disabled(!workspace.canProgramFlash)
             } label: { Image(systemName: "ellipsis.circle") }
             .disabled(!workspace.canRun)
             .help("More programming options, including persistent flash.")
@@ -291,6 +293,8 @@ private struct ProgrammerView: View {
                     .foregroundStyle(.secondary)
                 Text(workspace.latestBitstream?.lastPathComponent ?? "No bitstream yet")
                     .font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
+                Label("JTAG writes require exact C5G device ID 0x02b020dd", systemImage: "checkmark.shield")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             HStack {
                 if workspace.latestBitstream == nil {
@@ -300,12 +304,16 @@ private struct ProgrammerView: View {
                     Button("Detect Connected Board") { workspace.perform(.detectDevice) }
                         .buttonStyle(.borderedProminent).disabled(!workspace.canRun)
                 } else {
-                    Button("Program SRAM Safely") { workspace.perform(.programSRAM) }
+                    Button("Program SRAM Safely") { workspace.programSRAM() }
                         .buttonStyle(.borderedProminent).disabled(!workspace.canProgramSRAM)
                 }
                 Spacer()
                 Menu("Advanced") {
                     Button("Program Persistent Flash…") { workspace.prepareFlash() }
+                        .disabled(!workspace.canProgramFlash)
+                    if !workspace.board.isFlashProgrammingValidated {
+                        Text("Flash locked — hardware validation required")
+                    }
                     Divider()
                     Button("Detect JTAG Chain") { workspace.perform(.detectDevice) }
                 }.disabled(!workspace.canRun)
@@ -397,7 +405,9 @@ private struct InspectorSection<Content: View>: View {
 private struct FlashConfirmationView: View {
     @EnvironmentObject private var workspace: WorkspaceController
     @Environment(\.dismiss) private var dismiss
-    @State private var understood = false
+    @State private var understoodPower = false
+    @State private var understoodPersistence = false
+    @State private var boardConfirmation = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 14) {
@@ -421,11 +431,16 @@ private struct FlashConfirmationView: View {
                 Label("Keep USB and board power connected throughout the write.", systemImage: "powerplug")
                 Label("If configuration fails, return to SRAM programming with a recovery-safe LED design.", systemImage: "arrow.counterclockwise")
             }.font(.callout)
-            Toggle("I verified the board, switch position, and power connection.", isOn: $understood)
+            Toggle("I verified the board, switch position, USB connection, and stable power.", isOn: $understoodPower)
+            Toggle("I understand this write persists after power is removed and must not be interrupted.", isOn: $understoodPersistence)
+            TextField("Type C5G to confirm the physical board", text: $boardConfirmation)
+                .textFieldStyle(.roundedBorder)
             HStack {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("Write Flash") { workspace.confirmFlash() }.buttonStyle(.borderedProminent).tint(.orange).disabled(!understood)
+                Button("Write Persistent Flash") { workspace.confirmFlash() }
+                    .buttonStyle(.borderedProminent).tint(.orange)
+                    .disabled(!understoodPower || !understoodPersistence || boardConfirmation != "C5G")
             }
         }.padding(26).frame(width: 570)
     }
@@ -504,6 +519,8 @@ struct SettingsView: View {
             Form {
                 Section("Cyclone V GX") {
                     Text(workspace.board.experimentalNotice)
+                    CapabilityRow(title: "Program volatile SRAM", detail: "Exact JTAG identity and bitstream provenance required", ready: workspace.board.isSRAMProgrammingValidated)
+                    CapabilityRow(title: "Program persistent flash", detail: "Locked until upstream and physical-board validation are complete", ready: workspace.board.isFlashProgrammingValidated)
                     Link("Open-source backend documentation", destination: URL(string: "https://github.com/YosysHQ/nextpnr")!)
                 }
             }.padding(20).tabItem { Label("Hardware", systemImage: "cpu") }
