@@ -4,17 +4,21 @@ import SwiftUI
 struct WorkspaceView: View {
     @EnvironmentObject private var workspace: WorkspaceController
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @AppStorage("showLearningGuide") private var showLearningGuide = true
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             ProjectSidebar()
                 .navigationSplitViewColumnWidth(min: 190, ideal: 230, max: 300)
         } detail: {
-            VSplitView {
-                EditorArea()
-                    .frame(minHeight: 320)
-                BottomPanel()
-                    .frame(minHeight: 160, idealHeight: 230)
+            VStack(spacing: 0) {
+                if showLearningGuide { GuidedNextStepView() }
+                VSplitView {
+                    EditorArea()
+                        .frame(minHeight: 320)
+                    BottomPanel()
+                        .frame(minHeight: 160, idealHeight: 230)
+                }
             }
         }
         .inspector(isPresented: $workspace.showingInspector) {
@@ -26,6 +30,8 @@ struct WorkspaceView: View {
         .sheet(isPresented: $workspace.showingNewProject) { NewProjectSheet() }
         .sheet(isPresented: $workspace.showingFlashConfirmation) { FlashConfirmationView() }
         .sheet(isPresented: $workspace.showingSimulationTrust) { SimulationTrustView() }
+        .sheet(isPresented: $workspace.showingLearnCenter) { LearnCenterView() }
+        .sheet(isPresented: $workspace.showingWelcomeTour) { FirstLaunchTour() }
         .alert("FPGA Studio", isPresented: errorBinding) {
             Button("OK") { workspace.lastError = nil }
         } message: { Text(workspace.lastError ?? "") }
@@ -36,19 +42,24 @@ struct WorkspaceView: View {
         ToolbarItemGroup(placement: .primaryAction) {
             Button { workspace.perform(.validate) } label: { Label("Validate", systemImage: "checkmark.circle") }
                 .disabled(!workspace.canRun)
+                .help("Check source files, the top module, and board-pin assignments.")
             Button { workspace.simulateSelectedTest() } label: { Label("Simulate", systemImage: "waveform.path.ecg") }
                 .disabled(!workspace.canSimulate)
+                .help("Run the selected testbench without using FPGA hardware.")
             Button { workspace.perform(.build) } label: { Label("Build", systemImage: "hammer") }
                 .disabled(!workspace.canRun)
+                .help("Create a Cyclone V bitstream from the current HDL design.")
             Divider()
             Button { workspace.perform(.programSRAM) } label: { Label("Program SRAM", systemImage: "bolt.horizontal.circle") }
-                .disabled(!workspace.canRun)
+                .disabled(!workspace.canProgramSRAM)
+                .help("Load the bitstream temporarily. It clears when the board loses power.")
             Menu {
                 Button("Program SRAM") { workspace.perform(.programSRAM) }
                 Divider()
                 Button("Program Flash…") { workspace.prepareFlash() }
-            } label: { Image(systemName: "chevron.down.circle") }
+            } label: { Image(systemName: "ellipsis.circle") }
             .disabled(!workspace.canRun)
+            .help("More programming options, including persistent flash.")
         }
         ToolbarItem(placement: .status) {
             if workspace.isRunning {
@@ -64,6 +75,12 @@ struct WorkspaceView: View {
         }
         ToolbarItem {
             Button { workspace.showingInspector.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") }
+                .help("Show project settings, backend status, and board pins.")
+        }
+        ToolbarItem {
+            Button { workspace.showingLearnCenter = true } label: { Label("Learn", systemImage: "questionmark.circle") }
+                .help("Open plain-language FPGA concepts and workflow guidance.")
+                .accessibilityIdentifier("open-learn-center")
         }
     }
 
@@ -204,7 +221,11 @@ private struct IssuesView: View {
     @EnvironmentObject private var workspace: WorkspaceController
     var body: some View {
         if workspace.diagnostics.isEmpty {
-            ContentUnavailableView("No Issues", systemImage: "checkmark.circle", description: Text("Validation and tool diagnostics appear here."))
+            if workspace.lastValidationSucceeded {
+                ContentUnavailableView("Project Checks Passed", systemImage: "checkmark.circle.fill", description: Text("No errors or warnings were found. Simulation is the next safe step."))
+            } else {
+                ContentUnavailableView("Not Checked Yet", systemImage: "checkmark.circle", description: Text("Choose Check Project in the guide or Validate in the toolbar."))
+            }
         } else {
             List(workspace.diagnostics) { diagnostic in
                 Button { navigate(diagnostic) } label: {
@@ -248,7 +269,7 @@ private struct SimulationView: View {
                     Picker("Target", selection: $workspace.selectedTestID) {
                         ForEach(project.tests) { Text($0.name).tag(Optional($0.id)) }
                     }.frame(maxWidth: 360)
-                    Button("Run") { workspace.simulateSelectedTest() }.disabled(!workspace.canSimulate)
+                    Button("Run Simulation") { workspace.simulateSelectedTest() }.disabled(!workspace.canSimulate)
                     Spacer()
                 }.padding([.horizontal, .top], 12)
                 LogView(title: "Simulation output")
@@ -262,26 +283,46 @@ private struct SimulationView: View {
 private struct ProgrammerView: View {
     @EnvironmentObject private var workspace: WorkspaceController
     var body: some View {
-        HStack(spacing: 20) {
+        VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 8) {
                 Label("Terasic Cyclone V GX Starter Kit", systemImage: "cpu")
                     .font(.headline)
-                Text(workspace.boardConnected ? "USB-Blaster and JTAG chain detected" : "Connect the board and detect its JTAG chain before programming.")
+                Text(statusText)
                     .foregroundStyle(.secondary)
-                Text(workspace.latestBitstream?.lastPathComponent ?? "No .rbf build artifact")
+                Text(workspace.latestBitstream?.lastPathComponent ?? "No bitstream yet")
                     .font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
             }
-            Spacer()
-            Button("Detect") { workspace.perform(.detectDevice) }.disabled(!workspace.canRun)
-            Button("Program SRAM") { workspace.perform(.programSRAM) }.buttonStyle(.borderedProminent).disabled(!workspace.canRun)
-            Button("Flash…") { workspace.prepareFlash() }.disabled(!workspace.canRun)
+            HStack {
+                if workspace.latestBitstream == nil {
+                    Button("Build Bitstream First") { workspace.perform(.build) }
+                        .buttonStyle(.borderedProminent).disabled(!workspace.canRun || !workspace.buildToolsReady)
+                } else if !workspace.boardConnected {
+                    Button("Detect Connected Board") { workspace.perform(.detectDevice) }
+                        .buttonStyle(.borderedProminent).disabled(!workspace.canRun)
+                } else {
+                    Button("Program SRAM Safely") { workspace.perform(.programSRAM) }
+                        .buttonStyle(.borderedProminent).disabled(!workspace.canProgramSRAM)
+                }
+                Spacer()
+                Menu("Advanced") {
+                    Button("Program Persistent Flash…") { workspace.prepareFlash() }
+                    Divider()
+                    Button("Detect JTAG Chain") { workspace.perform(.detectDevice) }
+                }.disabled(!workspace.canRun)
+            }
         }.padding(20)
+    }
+    private var statusText: String {
+        if workspace.latestBitstream == nil { return "Build the design before connecting hardware." }
+        if !workspace.boardConnected { return "Connect USB and board power, then detect the board." }
+        return "Board detected. SRAM programming is temporary and is the safest first test."
     }
 }
 
 private struct ProjectInspector: View {
     @EnvironmentObject private var workspace: WorkspaceController
     @State private var pinSearch = ""
+    @AppStorage("showAdvancedControls") private var showAdvancedControls = false
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -291,15 +332,20 @@ private struct ProjectInspector: View {
                     LabeledContent("Top", value: workspace.project?.top ?? "—")
                     LabeledContent("Clock", value: String(format: "%.1f MHz", workspace.project?.synthesis.clockMHz ?? 0))
                 }
-                InspectorSection("Backend") {
-                    Label("Experimental", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    Text(workspace.board.experimentalNotice).font(.caption).foregroundStyle(.secondary)
-                }
-                InspectorSection("Conservative Synthesis") {
-                    Toggle("M10K block RAM", isOn: .constant(workspace.project?.synthesis.enableBlockRAM ?? false)).disabled(true)
-                    Toggle("LUT RAM", isOn: .constant(workspace.project?.synthesis.enableLUTRAM ?? false)).disabled(true)
-                    Toggle("DSP inference", isOn: .constant(workspace.project?.synthesis.enableDSP ?? false)).disabled(true)
-                    Text("Edit the versioned manifest to opt into experimental resources.").font(.caption).foregroundStyle(.secondary)
+                if showAdvancedControls {
+                    InspectorSection("Backend") {
+                        Label("Experimental Cyclone V flow", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        Text(workspace.board.experimentalNotice).font(.caption).foregroundStyle(.secondary)
+                    }
+                    InspectorSection("Conservative Synthesis") {
+                        Toggle("M10K block RAM", isOn: .constant(workspace.project?.synthesis.enableBlockRAM ?? false)).disabled(true)
+                        Toggle("LUT RAM", isOn: .constant(workspace.project?.synthesis.enableLUTRAM ?? false)).disabled(true)
+                        Toggle("DSP inference", isOn: .constant(workspace.project?.synthesis.enableDSP ?? false)).disabled(true)
+                        Text("These hard blocks stay off in the beginner-safe configuration.").font(.caption).foregroundStyle(.secondary)
+                    }
+                } else {
+                    Label("Beginner-safe synthesis settings are active", systemImage: "checkmark.shield")
+                        .font(.caption).foregroundStyle(.green)
                 }
                 InspectorSection("Pin Assignments") {
                     TextField("Search signals or pins", text: $pinSearch).textFieldStyle(.roundedBorder)
@@ -411,20 +457,40 @@ private struct SimulationTrustView: View {
 
 struct SettingsView: View {
     @EnvironmentObject private var workspace: WorkspaceController
+    @AppStorage("showLearningGuide") private var showLearningGuide = true
+    @AppStorage("showAdvancedControls") private var showAdvancedControls = false
+    @AppStorage("didSeeWelcomeTour") private var didSeeWelcomeTour = false
     var body: some View {
         TabView {
             Form {
+                Section("Learning") {
+                    Toggle("Show the next-step guide", isOn: $showLearningGuide)
+                    Toggle("Show advanced synthesis controls", isOn: $showAdvancedControls)
+                    Button("Show Welcome Tour Again") {
+                        didSeeWelcomeTour = false
+                        workspace.showingWelcomeTour = true
+                    }
+                    Text("The guide changes only what is shown. It never removes project features or changes generated HDL.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }.padding(20).tabItem { Label("General", systemImage: "slider.horizontal.3") }
+            Form {
                 Section("Managed Toolchain") {
-                    ForEach(workspace.toolHealth) { tool in
-                        HStack {
-                            Image(systemName: tool.isAvailable ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                                .foregroundStyle(tool.isAvailable ? .green : .orange)
-                            VStack(alignment: .leading) {
-                                Text(tool.name)
-                                Text(tool.resolvedURL?.path ?? "Not installed").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    CapabilityRow(title: "Simulate designs", detail: "Icarus Verilog or GHDL", ready: simulationReady)
+                    CapabilityRow(title: "Build for Cyclone V", detail: "Yosys and nextpnr-mistral", ready: workspace.buildToolsReady)
+                    CapabilityRow(title: "Program the C5G", detail: "openFPGALoader", ready: programmerReady)
+                    DisclosureGroup("Individual tools") {
+                        ForEach(workspace.toolHealth) { tool in
+                            HStack {
+                                Image(systemName: tool.isAvailable ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                                    .foregroundStyle(tool.isAvailable ? .green : .orange)
+                                VStack(alignment: .leading) {
+                                    Text(tool.name)
+                                    Text(tool.resolvedURL?.path ?? "Not installed").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                                Spacer()
+                                Text(tool.expectedVersion).font(.caption.monospaced()).foregroundStyle(.secondary)
                             }
-                            Spacer()
-                            Text(tool.expectedVersion).font(.caption.monospaced()).foregroundStyle(.secondary)
                         }
                     }
                     Button("Check Again") { workspace.refreshToolchain() }
@@ -437,6 +503,29 @@ struct SettingsView: View {
                     Link("Open-source backend documentation", destination: URL(string: "https://github.com/YosysHQ/nextpnr")!)
                 }
             }.padding(20).tabItem { Label("Hardware", systemImage: "cpu") }
+        }
+    }
+
+    private var simulationReady: Bool {
+        workspace.toolHealth.contains { $0.isAvailable && ["iverilog", "ghdl"].contains($0.executable) }
+    }
+    private var programmerReady: Bool {
+        workspace.toolHealth.contains { $0.isAvailable && $0.executable == "openFPGALoader" }
+    }
+}
+
+private struct CapabilityRow: View {
+    let title: String
+    let detail: String
+    let ready: Bool
+    var body: some View {
+        HStack {
+            Image(systemName: ready ? "checkmark.circle.fill" : "circle.dashed")
+                .foregroundStyle(ready ? .green : .orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                Text(ready ? "Ready" : "Needs setup: \(detail)").font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
 }

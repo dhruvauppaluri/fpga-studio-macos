@@ -103,6 +103,29 @@ final class WaveformTests: XCTestCase {
     }
 }
 
+final class LearningPathTests: XCTestCase {
+    func testBlinkyIsTheRecommendedBeginnerTemplate() {
+        XCTAssertEqual(ProjectTemplate.recommendedForBeginners, .blinky)
+    }
+
+    func testBeginnerPathStartsWithValidation() {
+        XCTAssertEqual(LearningProgress().nextStep, .validate)
+    }
+
+    func testBeginnerPathAdvancesOneConceptAtATime() {
+        XCTAssertEqual(LearningProgress(validated: true).nextStep, .simulate)
+        XCTAssertEqual(LearningProgress(validated: true, simulated: true).nextStep, .build)
+        XCTAssertEqual(LearningProgress(validated: true, simulated: true, built: true).nextStep, .connect)
+        XCTAssertEqual(LearningProgress(validated: true, simulated: true, built: true, boardConnected: true).nextStep, .programSRAM)
+    }
+
+    func testBeginnerPathCompletesAfterSafeSRAMProgramming() {
+        let progress = LearningProgress(validated: true, simulated: true, built: true, boardConnected: true, programmedSRAM: true)
+        XCTAssertEqual(progress.nextStep, .complete)
+        XCTAssertEqual(progress.completedCount, 5)
+    }
+}
+
 final class TemplateTests: XCTestCase {
     func testRV32ITemplateIsScaffoldingNotFinishedCPU() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("fpga-template-\(UUID().uuidString)")

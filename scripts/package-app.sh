@@ -23,6 +23,9 @@ if [[ -f "$project_root/Toolchains/bootstrap.zip" ]]; then
   cp "$project_root/Toolchains/bootstrap.zip" "$app/Contents/Resources/Toolchains/bootstrap.zip"
 fi
 
+# Finder and cloud-provider metadata invalidates strict code-signature checks.
+xattr -cr "$app"
+
 if [[ -n "${DEVELOPER_ID_APPLICATION:-}" ]]; then
   codesign --force --options runtime --timestamp \
     --entitlements "$project_root/Packaging/FPGAStudio.entitlements" \

@@ -33,11 +33,16 @@ final class WorkspaceController: ObservableObject {
     @Published var showingNewProject = false
     @Published var showingFlashConfirmation = false
     @Published var showingSimulationTrust = false
+    @Published var showingLearnCenter = false
+    @Published var showingWelcomeTour = false
     @Published var showingInspector = true
     @Published var toolHealth: [ToolHealth] = []
     @Published var lastError: String?
     @Published private(set) var constraintsRevision = 0
     @Published private(set) var flashCandidate: ProgrammingArtifact?
+    @Published private(set) var lastValidationSucceeded = false
+    @Published private(set) var lastBuildSucceeded = false
+    @Published private(set) var lastProgrammedSRAM = false
 
     let board: BoardProfile
     private let pipeline = BuildPipeline()
@@ -58,6 +63,20 @@ final class WorkspaceController: ObservableObject {
     var canRun: Bool { project != nil && !isRunning && !(project?.isReadOnly ?? true) }
     var canSimulate: Bool { canRun && !(project?.tests.isEmpty ?? true) }
     var canCancel: Bool { isRunning && stage != .programmingFlash }
+    var canProgramSRAM: Bool { canRun && lastBuildSucceeded && boardConnected }
+    var learningProgress: LearningProgress {
+        .init(
+            validated: lastValidationSucceeded,
+            simulated: waveform != nil,
+            built: lastBuildSucceeded,
+            boardConnected: boardConnected,
+            programmedSRAM: lastProgrammedSRAM
+        )
+    }
+    var buildToolsReady: Bool {
+        let available = Set(toolHealth.filter(\.isAvailable).map(\.executable))
+        return available.contains("yosys") && available.contains("nextpnr-mistral")
+    }
 
     var recentProjects: [URL] {
         (UserDefaults.standard.stringArray(forKey: "recentProjects") ?? []).map(URL.init(fileURLWithPath:))
@@ -84,6 +103,11 @@ final class WorkspaceController: ObservableObject {
             documents = []
             selectedDocumentID = nil
             diagnostics = ProjectValidator.validate(project: loaded, root: url, board: board)
+            lastValidationSucceeded = false
+            lastBuildSucceeded = false
+            lastProgrammedSRAM = false
+            boardConnected = false
+            waveform = nil
             remember(url)
             if let first = loaded.sources.first { openSource(first) }
         } catch { lastError = error.localizedDescription }
@@ -97,6 +121,9 @@ final class WorkspaceController: ObservableObject {
         selectedDocumentID = nil
         waveform = nil
         log = ""
+        lastValidationSucceeded = false
+        lastBuildSucceeded = false
+        lastProgrammedSRAM = false
     }
 
     func createProject(template: ProjectTemplate, language: HDLLanguage, name: String, parent: URL) {
@@ -125,6 +152,7 @@ final class WorkspaceController: ObservableObject {
         guard let id = selectedDocumentID, let index = documents.firstIndex(where: { $0.id == id }) else { return }
         documents[index].text = text
         documents[index].isDirty = true
+        invalidateGeneratedResults()
         do {
             try Data(text.utf8).write(to: documents[index].url, options: .atomic)
             documents[index].isDirty = false
@@ -166,6 +194,16 @@ final class WorkspaceController: ObservableObject {
 
     func perform(_ action: BuildAction) {
         guard let project, let rootURL, !isRunning else { return }
+        if case .programSRAM = action {
+            guard lastBuildSucceeded else {
+                lastError = "Build the current design before programming the FPGA."
+                return
+            }
+            guard boardConnected else {
+                lastError = "Connect and detect the C5G before programming the FPGA."
+                return
+            }
+        }
         saveAll()
         isRunning = true
         log = ""
@@ -196,12 +234,37 @@ final class WorkspaceController: ObservableObject {
                 waveform = parsed
                 selectedBottomTab = "Waveform"
             }
+            if outcome.succeeded {
+                switch action {
+                case .validate:
+                    lastValidationSucceeded = true
+                case .simulate:
+                    lastValidationSucceeded = true
+                case .build:
+                    lastValidationSucceeded = true
+                    lastBuildSucceeded = true
+                case .detectDevice:
+                    boardConnected = true
+                case .programSRAM:
+                    lastProgrammedSRAM = true
+                case .programFlash:
+                    break
+                }
+            }
             if !outcome.succeeded { selectedBottomTab = "Issues" }
             finishOperation()
         }
     }
 
     func prepareFlash() {
+        guard lastBuildSucceeded else {
+            lastError = "Build the current design before programming persistent flash."
+            return
+        }
+        guard boardConnected else {
+            lastError = "Connect and detect the C5G before programming persistent flash."
+            return
+        }
         guard let url = latestBitstream else { lastError = FPGAStudioError.noBitstream.localizedDescription; return }
         do {
             let data = try Data(contentsOf: url, options: [.mappedIfSafe])
@@ -298,6 +361,7 @@ final class WorkspaceController: ObservableObject {
             try Data(lines.joined(separator: "\n").utf8).write(to: url, options: .atomic)
             constraintsRevision += 1
             diagnostics = ProjectValidator.validate(project: project, root: rootURL, board: board)
+            invalidateGeneratedResults()
         } catch { lastError = error.localizedDescription }
     }
 
@@ -334,6 +398,13 @@ final class WorkspaceController: ObservableObject {
         AppLifecycleDelegate.flashWriteActive = false
         isRunning = false
         operation = nil
+    }
+
+    private func invalidateGeneratedResults() {
+        lastValidationSucceeded = false
+        lastBuildSucceeded = false
+        lastProgrammedSRAM = false
+        waveform = nil
     }
 
     private var trustIdentifier: String? {

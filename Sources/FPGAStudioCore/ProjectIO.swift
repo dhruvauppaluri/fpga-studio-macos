@@ -91,6 +91,8 @@ public enum ProjectTemplate: String, CaseIterable, Identifiable, Sendable {
     case blinky
     case rv32i
 
+    public static let recommendedForBeginners: ProjectTemplate = .blinky
+
     public var id: String { rawValue }
     public var displayName: String {
         switch self {

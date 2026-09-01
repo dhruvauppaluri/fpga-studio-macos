@@ -38,12 +38,16 @@ struct FPGAStudioApp: App {
                     .disabled(!workspace.canRun)
                 Divider()
                 Button("Program SRAM") { workspace.perform(.programSRAM) }
-                    .disabled(!workspace.canRun)
+                    .disabled(!workspace.canProgramSRAM)
                 Button("Program Flash…") { workspace.prepareFlash() }
                     .disabled(!workspace.canRun)
                 Divider()
                 Button("Cancel Operation") { workspace.cancel() }
                     .disabled(!workspace.canCancel)
+            }
+            CommandGroup(after: .help) {
+                Button("FPGA Learning Center") { workspace.showingLearnCenter = true }
+                    .keyboardShortcut("?", modifiers: [.command, .shift])
             }
         }
 
