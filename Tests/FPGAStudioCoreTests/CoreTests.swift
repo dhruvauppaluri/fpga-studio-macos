@@ -108,6 +108,16 @@ final class LearningPathTests: XCTestCase {
         XCTAssertEqual(ProjectTemplate.recommendedForBeginners, .blinky)
     }
 
+    func testWorkspaceProfilesChangePresentationDefaultsNotCapabilities() {
+        XCTAssertEqual(ExperienceProfile.allCases, [.beginner, .hobbyist, .professional])
+        XCTAssertTrue(ExperienceProfile.beginner.showsLearningGuideByDefault)
+        XCTAssertFalse(ExperienceProfile.hobbyist.showsLearningGuideByDefault)
+        XCTAssertTrue(ExperienceProfile.professional.showsAdvancedControlsByDefault)
+        XCTAssertEqual(ExperienceProfile.beginner.recommendedTemplate, .blinky)
+        XCTAssertEqual(ExperienceProfile.hobbyist.recommendedTemplate, .blank)
+        XCTAssertEqual(ExperienceProfile.professional.recommendedTemplate, .blank)
+    }
+
     func testBeginnerPathStartsWithValidation() {
         XCTAssertEqual(LearningProgress().nextStep, .validate)
     }

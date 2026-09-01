@@ -15,7 +15,8 @@ The app uses Swift 6, SwiftUI, and a TextKit/AppKit source editor. Projects rema
 - Searchable C5G assignments with duplicate, unknown-pin, missing-port, I/O-standard, and port-direction validation.
 - Safe SRAM programming and a guarded EPCQ flash flow with artifact hash, operating instructions, sleep/termination protection, and post-write JTAG detection.
 - Managed archive import, SHA-256 and optional Ed25519 verification, atomic activation, installed-version activation for rollback, and Homebrew lookup while developing.
-- A beginner-first experience with a two-minute welcome tour, Blinky as the recommended first project, a progressive next-step guide, capability-based toolchain setup, and a searchable plain-language Learn center.
+- Adaptive Beginner, Hobbyist, and Professional workspace profiles over one complete feature set. Profiles tune guidance, project recommendations, and technical detail without gating capabilities.
+- A two-minute welcome tour, progressive next-step guide, capability-based toolchain setup, and a searchable plain-language Learn Center.
 
 ## Your first project
 
@@ -26,6 +27,8 @@ The app uses Swift 6, SwiftUI, and a TextKit/AppKit source editor. Projects rema
 5. Connect the C5G, choose **Detect Board**, and use **Program SRAM Safely**.
 
 Persistent flash and experimental synthesis resources stay under advanced controls. The learning guide can be hidden or restored without changing project files or capabilities. The experience rules are documented in [Documentation/DesignSystem.md](Documentation/DesignSystem.md).
+
+Hobbyists can use the balanced workspace for direct simulation, build, pin editing, and programming. Professionals can apply the Professional profile to expose backend status and advanced synthesis detail by default while retaining the same safety checks and portable project format.
 
 ## Build and run
 

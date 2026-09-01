@@ -18,21 +18,36 @@ FPGA Studio follows native macOS interaction patterns and uses progressive discl
 - Corners: 14 pt learning/content cards; system defaults for controls and sheets.
 - Motion: no required animation; all workflows remain understandable with Reduce Motion enabled.
 
-## Progressive levels
+## Workspace profiles
 
-### Guided, default
+Profiles are reversible presentation presets. They never hide or disable capabilities, alter project files, or change build semantics. Users may apply a profile and then customize guidance and advanced-detail visibility independently.
+
+### Beginner
 
 - First-run three-page tour.
 - Blinky selected by default and labeled as the recommended first project.
 - Next-step guide visible above the editor.
 - Capability-based toolchain status.
-- Beginner-safe synthesis summary.
+- Conservative synthesis summary.
 - Persistent flash inside an Advanced menu.
 
-### Advanced, optional
+### Hobbyist
 
-- Experimental backend notice and hard-block controls visible in the inspector.
-- Raw build logs, project manifest, pin assignments, and all programming actions remain available in both levels.
+- Balanced presentation with the guide hidden by default but always available.
+- Blank HDL recommended while Blinky and RV32I remain equally accessible.
+- Direct toolbar actions, waveforms, pin editing, build artifacts, logs, and programming.
+- Advanced backend detail remains opt-in.
+
+### Professional
+
+- Experimental backend notice and advanced synthesis detail visible by default.
+- Blank HDL recommended for direct project creation.
+- Raw build logs, project manifest, deterministic build artifacts, pin assignments, and programming actions remain directly accessible.
+- Hardware safety checks and flash confirmation remain mandatory.
+
+### Customization
+
+The next-step guide and advanced synthesis detail are independent switches. Applying a profile restores its defaults; changing either switch afterward does not change the selected profile or project behavior.
 
 ## Core components
 

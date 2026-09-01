@@ -12,20 +12,23 @@ struct FirstLaunchTour: View {
     @EnvironmentObject private var workspace: WorkspaceController
     @Environment(\.dismiss) private var dismiss
     @AppStorage("didSeeWelcomeTour") private var didSeeWelcomeTour = false
+    @AppStorage("experienceProfile") private var experienceProfile: ExperienceProfile = .beginner
+    @AppStorage("showLearningGuide") private var showLearningGuide = true
+    @AppStorage("showAdvancedControls") private var showAdvancedControls = false
     @State private var page = 0
 
-    private let pages: [(icon: String, title: String, text: String, note: String)] = [
+    private var pages: [(icon: String, title: String, text: String, note: String)] { [
         (
-            "square.stack.3d.up.fill",
-            "Describe hardware with code",
-            "An FPGA becomes the digital circuit you describe. You will write HDL, check it, simulate it, build a bitstream, and then load it onto the board.",
-            "FPGA Studio keeps that entire flow in one window."
+            experienceProfile.icon,
+            "Choose how you work",
+            "FPGA Studio has one complete toolset for everyone. Your workspace profile changes how much guidance and technical detail appears by default—not what you can do.",
+            "You can switch profiles or customize either setting at any time."
         ),
         (
             "waveform.path.ecg",
-            "Start without a board",
-            "Simulation lets you see clocks, counters, and processor signals before touching hardware. The Blinky project is the best place to learn the flow.",
-            "You can learn editing and simulation with only your Mac."
+            workflowTitle,
+            workflowText,
+            workflowNote
         ),
         (
             "bolt.horizontal.circle.fill",
@@ -33,7 +36,7 @@ struct FirstLaunchTour: View {
             "When your C5G is connected, program SRAM first. It is temporary and clears when power is removed. Persistent flash stays behind an advanced confirmation.",
             "The guide always suggests one safe next step."
         )
-    ]
+    ] }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -57,6 +60,10 @@ struct FirstLaunchTour: View {
                         .font(.callout.weight(.medium)).foregroundStyle(.blue)
                         .padding(.top, 2)
                 }
+                if page == 0 {
+                    ExperienceProfilePicker(selection: $experienceProfile)
+                        .frame(maxWidth: 590)
+                }
                 HStack(spacing: 7) {
                     ForEach(pages.indices, id: \.self) { index in
                         Capsule().fill(index == page ? Color.accentColor : Color.secondary.opacity(0.25))
@@ -74,22 +81,75 @@ struct FirstLaunchTour: View {
                 if page < pages.count - 1 {
                     Button("Continue") { page += 1 }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
                 } else {
-                    Button("Create My First Project") {
+                    Button("Create a Project") {
                         finish(createProject: true)
                     }
                     .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
                 }
             }.padding(20).background(.bar)
         }
-        .frame(width: 680, height: 560)
+        .frame(width: 780, height: 650)
     }
 
     private func finish(createProject: Bool = false) {
+        showLearningGuide = experienceProfile.showsLearningGuideByDefault
+        showAdvancedControls = experienceProfile.showsAdvancedControlsByDefault
         didSeeWelcomeTour = true
         dismiss()
         if createProject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                 workspace.showingNewProject = true
+            }
+        }
+    }
+
+    private var workflowTitle: String {
+        switch experienceProfile {
+        case .beginner: "Learn one step at a time"
+        case .hobbyist: "Move quickly from idea to hardware"
+        case .professional: "Keep the complete flow close"
+        }
+    }
+
+    private var workflowText: String {
+        switch experienceProfile {
+        case .beginner: "Start with Blinky, simulate without a board, and follow one recommended action at a time. Plain-language help is always nearby."
+        case .hobbyist: "Create portable HDL projects, inspect waveforms, edit validated pins, and move directly through simulation, build, and programming."
+        case .professional: "Work with direct toolbar actions, raw diagnostics, build artifacts, deterministic routing, board constraints, and visible backend details."
+        }
+    }
+
+    private var workflowNote: String {
+        switch experienceProfile {
+        case .beginner: "The learning guide stays visible until you hide it."
+        case .hobbyist: "Guidance stays available without taking over the workspace."
+        case .professional: "Advanced controls are visible by default; safety checks still apply."
+        }
+    }
+}
+
+struct ExperienceProfilePicker: View {
+    @Binding var selection: ExperienceProfile
+
+    var body: some View {
+        HStack(spacing: StudioMetrics.compact) {
+            ForEach(ExperienceProfile.allCases) { profile in
+                Button { selection = profile } label: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label(profile.title, systemImage: profile.icon).font(.headline)
+                        Text(profile.summary)
+                            .font(.caption).foregroundStyle(selection == profile ? .white.opacity(0.88) : .secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 72, alignment: .topLeading)
+                    .padding(StudioMetrics.standard)
+                    .background(selection == profile ? Color.accentColor : Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: StudioMetrics.cardRadius, style: .continuous))
+                    .foregroundStyle(selection == profile ? Color.white : Color.primary)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(profile.title) workspace")
+                .accessibilityValue(selection == profile ? "Selected" : "Not selected")
             }
         }
     }

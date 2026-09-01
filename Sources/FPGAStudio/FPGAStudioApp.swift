@@ -48,13 +48,14 @@ struct FPGAStudioApp: App {
             CommandGroup(after: .help) {
                 Button("FPGA Learning Center") { workspace.showingLearnCenter = true }
                     .keyboardShortcut("?", modifiers: [.command, .shift])
+                SettingsLink { Text("Customize Workspace…") }
             }
         }
 
         Settings {
             SettingsView()
                 .environmentObject(workspace)
-                .frame(width: 620, height: 430)
+                .frame(width: 720, height: 540)
         }
     }
 }

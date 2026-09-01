@@ -344,7 +344,7 @@ private struct ProjectInspector: View {
                         Text("These hard blocks stay off in the beginner-safe configuration.").font(.caption).foregroundStyle(.secondary)
                     }
                 } else {
-                    Label("Beginner-safe synthesis settings are active", systemImage: "checkmark.shield")
+                    Label("Conservative synthesis settings are active", systemImage: "checkmark.shield")
                         .font(.caption).foregroundStyle(.green)
                 }
                 InspectorSection("Pin Assignments") {
@@ -460,18 +460,22 @@ struct SettingsView: View {
     @AppStorage("showLearningGuide") private var showLearningGuide = true
     @AppStorage("showAdvancedControls") private var showAdvancedControls = false
     @AppStorage("didSeeWelcomeTour") private var didSeeWelcomeTour = false
+    @AppStorage("experienceProfile") private var experienceProfile: ExperienceProfile = .beginner
     var body: some View {
         TabView {
             Form {
-                Section("Learning") {
+                Section("Workspace Profile") {
+                    ExperienceProfilePicker(selection: $experienceProfile)
+                    Text("Selecting a profile applies its presentation defaults. Every project, build, waveform, constraint, and programming feature remains available in every profile.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("Customize") {
                     Toggle("Show the next-step guide", isOn: $showLearningGuide)
                     Toggle("Show advanced synthesis controls", isOn: $showAdvancedControls)
                     Button("Show Welcome Tour Again") {
                         didSeeWelcomeTour = false
                         workspace.showingWelcomeTour = true
                     }
-                    Text("The guide changes only what is shown. It never removes project features or changes generated HDL.")
-                        .font(.caption).foregroundStyle(.secondary)
                 }
             }.padding(20).tabItem { Label("General", systemImage: "slider.horizontal.3") }
             Form {
@@ -504,6 +508,7 @@ struct SettingsView: View {
                 }
             }.padding(20).tabItem { Label("Hardware", systemImage: "cpu") }
         }
+        .onChange(of: experienceProfile) { _, _ in applyProfileDefaults() }
     }
 
     private var simulationReady: Bool {
@@ -511,6 +516,10 @@ struct SettingsView: View {
     }
     private var programmerReady: Bool {
         workspace.toolHealth.contains { $0.isAvailable && $0.executable == "openFPGALoader" }
+    }
+    private func applyProfileDefaults() {
+        showLearningGuide = experienceProfile.showsLearningGuideByDefault
+        showAdvancedControls = experienceProfile.showsAdvancedControlsByDefault
     }
 }
 

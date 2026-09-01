@@ -4,14 +4,15 @@ set -euo pipefail
 project_root=${0:A:h:h}
 configuration=${CONFIGURATION:-release}
 output_root=${1:-"$project_root/dist"}
-app="$output_root/FPGA Studio.app"
+final_app="$output_root/FPGA Studio.app"
 cache="$project_root/.build/module-cache"
+staging_root=$(mktemp -d)
+app="$staging_root/FPGA Studio.app"
 
 mkdir -p "$cache" "$output_root"
 CLANG_MODULE_CACHE_PATH="$cache" SWIFTPM_MODULECACHE_OVERRIDE="$cache" \
   swift build --package-path "$project_root" --configuration "$configuration" --disable-sandbox
 
-rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 mkdir -p "$app/Contents/Resources/Boards"
 cp "$project_root/.build/$configuration/FPGAStudio" "$app/Contents/MacOS/FPGAStudio"
@@ -35,4 +36,10 @@ else
   print "Created an ad-hoc signed development build. Set DEVELOPER_ID_APPLICATION for distribution signing."
 fi
 
-print "$app"
+codesign --verify --deep --strict "$app"
+rm -rf "$final_app"
+ditto --norsrc "$app" "$final_app"
+xattr -cr "$final_app"
+rm -rf "$staging_root"
+
+print "$final_app"

@@ -5,6 +5,7 @@ import SwiftUI
 struct WelcomeView: View {
     @EnvironmentObject private var workspace: WorkspaceController
     @AppStorage("didSeeWelcomeTour") private var didSeeWelcomeTour = false
+    @AppStorage("experienceProfile") private var experienceProfile: ExperienceProfile = .beginner
 
     var body: some View {
         ZStack {
@@ -38,12 +39,15 @@ struct WelcomeView: View {
                             .controlSize(.large)
                     }
                     Button { workspace.showingWelcomeTour = true } label: {
-                        Label("New to FPGA? Take the 2-minute tour", systemImage: "graduationcap")
+                        Label("Choose How You Work", systemImage: experienceProfile.icon)
                     }
                     .buttonStyle(.link)
-                    .help("Learn the basic FPGA workflow before creating a project.")
+                    .help("Choose a Beginner, Hobbyist, or Professional workspace preset.")
                     Spacer()
-                    StatusPill(icon: "shippingbox", label: toolSummary, color: workspace.toolHealth.allSatisfy(\.isAvailable) ? .green : .orange)
+                    HStack(spacing: 8) {
+                        StatusPill(icon: experienceProfile.icon, label: experienceProfile.title, color: .blue)
+                        StatusPill(icon: "shippingbox", label: toolSummary, color: toolStatusColor)
+                    }
                 }
                 .padding(52)
                 .frame(maxWidth: 560, alignment: .leading)
@@ -51,13 +55,13 @@ struct WelcomeView: View {
                 Divider().padding(.vertical, 44)
 
                 VStack(alignment: .leading, spacing: 14) {
-                    Text(workspace.recentProjects.isEmpty ? "Start Here" : "Recent Projects")
+                    Text(workspace.recentProjects.isEmpty ? emptySectionTitle : "Recent Projects")
                         .font(.headline)
                     if workspace.recentProjects.isEmpty {
                         VStack(alignment: .leading, spacing: 16) {
-                            WelcomeStep(number: 1, title: "Create Blinky", text: "Begin with one counter and one LED.")
-                            WelcomeStep(number: 2, title: "Run a Simulation", text: "See the signal change before using hardware.")
-                            WelcomeStep(number: 3, title: "Build and Program", text: "Connect the C5G when you are ready.")
+                            ForEach(Array(emptySteps.enumerated()), id: \.offset) { index, step in
+                                WelcomeStep(number: index + 1, title: step.title, text: step.text)
+                            }
                             Button("Open Learn Center") { workspace.showingLearnCenter = true }
                                 .buttonStyle(.bordered)
                         }
@@ -106,6 +110,30 @@ struct WelcomeView: View {
         return "Toolchain: \(available) of \(workspace.toolHealth.count) tools ready"
     }
 
+    private var toolStatusColor: Color {
+        guard !workspace.toolHealth.isEmpty else { return .secondary }
+        return workspace.toolHealth.allSatisfy(\.isAvailable) ? .green : .orange
+    }
+
+    private var emptySectionTitle: String {
+        switch experienceProfile {
+        case .beginner: "Start Here"
+        case .hobbyist: "Start Building"
+        case .professional: "New Workspace"
+        }
+    }
+
+    private var emptySteps: [(title: String, text: String)] {
+        switch experienceProfile {
+        case .beginner:
+            [("Create Blinky", "Begin with one counter and one LED."), ("Run a Simulation", "See the signal change before using hardware."), ("Build and Program", "Connect the C5G when you are ready.")]
+        case .hobbyist:
+            [("Choose a Template", "Start fresh or use a working hardware example."), ("Simulate and Inspect", "Check behavior in the native waveform viewer."), ("Build and Program", "Create an RBF and load it over USB-Blaster.")]
+        case .professional:
+            [("Open a Portable Project", "Use the versioned JSON manifest and ordinary HDL files."), ("Run the Deterministic Flow", "Validate, simulate, synthesize, place, and route."), ("Inspect and Deploy", "Review diagnostics and artifacts before programming.")]
+        }
+    }
+
     private var errorBinding: Binding<Bool> {
         Binding(get: { workspace.lastError != nil }, set: { if !$0 { workspace.lastError = nil } })
     }
@@ -144,9 +172,16 @@ struct NewProjectSheet: View {
     @EnvironmentObject private var workspace: WorkspaceController
     @Environment(\.dismiss) private var dismiss
     @State private var name = "My FPGA Project"
-    @State private var template: ProjectTemplate = .recommendedForBeginners
+    @AppStorage("experienceProfile") private var experienceProfile: ExperienceProfile = .beginner
+    @State private var template: ProjectTemplate
     @State private var language: HDLLanguage = .systemVerilog
     @State private var parent = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+
+    init() {
+        let raw = UserDefaults.standard.string(forKey: "experienceProfile") ?? ExperienceProfile.beginner.rawValue
+        let profile = ExperienceProfile(rawValue: raw) ?? .beginner
+        _template = State(initialValue: profile.recommendedTemplate)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -193,7 +228,7 @@ struct NewProjectSheet: View {
             HStack {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
-                Button(template == .blinky ? "Create and Start Learning" : "Create Project") { workspace.createProject(template: template, language: template == .rv32i ? .systemVerilog : language, name: name, parent: parent) }
+                Button(experienceProfile == .beginner && template == .blinky ? "Create and Start Learning" : "Create Project") { workspace.createProject(template: template, language: template == .rv32i ? .systemVerilog : language, name: name, parent: parent) }
                     .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -203,10 +238,11 @@ struct NewProjectSheet: View {
     }
 
     private func templateBadge(_ item: ProjectTemplate) -> String {
+        if item == experienceProfile.recommendedTemplate { return "RECOMMENDED FOR YOU" }
         switch item {
-        case .blinky: "RECOMMENDED FIRST PROJECT"
-        case .blank: "FAMILIAR WITH HDL"
-        case .rv32i: "ADVANCED LAB"
+        case .blinky: return "GUIDED EXAMPLE"
+        case .blank: return "START FROM SCRATCH"
+        case .rv32i: return "PROCESSOR LAB"
         }
     }
 
