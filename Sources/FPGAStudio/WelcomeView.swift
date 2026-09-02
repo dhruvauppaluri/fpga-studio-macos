@@ -171,16 +171,19 @@ struct StatusPill: View {
 struct NewProjectSheet: View {
     @EnvironmentObject private var workspace: WorkspaceController
     @Environment(\.dismiss) private var dismiss
-    @State private var name = "My FPGA Project"
+    @State private var name: String
     @AppStorage("experienceProfile") private var experienceProfile: ExperienceProfile = .beginner
     @State private var template: ProjectTemplate
     @State private var language: HDLLanguage = .systemVerilog
-    @State private var parent = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    @State private var parent: URL
 
     init() {
         let raw = UserDefaults.standard.string(forKey: "experienceProfile") ?? ExperienceProfile.beginner.rawValue
         let profile = ExperienceProfile(rawValue: raw) ?? .beginner
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        _name = State(initialValue: Self.suggestedProjectName(in: documents))
         _template = State(initialValue: profile.recommendedTemplate)
+        _parent = State(initialValue: documents)
     }
 
     var body: some View {
@@ -194,6 +197,11 @@ struct NewProjectSheet: View {
                 Image(systemName: "folder.badge.plus").font(.system(size: 32)).foregroundStyle(.blue)
             }
             TextField("Project Name", text: $name).textFieldStyle(.roundedBorder)
+            if destinationIsUnavailable {
+                Label("That folder already contains files. Choose another project name or location.", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
             HStack(spacing: 12) {
                 ForEach(ProjectTemplate.allCases) { item in
                     Button { template = item } label: {
@@ -230,11 +238,16 @@ struct NewProjectSheet: View {
                 Spacer()
                 Button(experienceProfile == .beginner && template == .blinky ? "Create and Start Learning" : "Create Project") { workspace.createProject(template: template, language: template == .rv32i ? .systemVerilog : language, name: name, parent: parent) }
                     .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || destinationIsUnavailable)
             }
         }
         .padding(28)
         .frame(width: 720)
+        .alert("Couldn’t Create Project", isPresented: errorBinding) {
+            Button("OK") { workspace.lastError = nil }
+        } message: {
+            Text(workspace.lastError ?? "")
+        }
     }
 
     private func templateBadge(_ item: ProjectTemplate) -> String {
@@ -258,5 +271,29 @@ struct NewProjectSheet: View {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true
         if panel.runModal() == .OK, let url = panel.url { parent = url }
+    }
+
+    private var destinationIsUnavailable: Bool {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return false }
+        let destination = parent.appendingPathComponent(trimmedName, isDirectory: true)
+        guard FileManager.default.fileExists(atPath: destination.path) else { return false }
+        guard let contents = try? FileManager.default.contentsOfDirectory(atPath: destination.path) else { return true }
+        return !contents.isEmpty
+    }
+
+    private var errorBinding: Binding<Bool> {
+        Binding(get: { workspace.lastError != nil }, set: { if !$0 { workspace.lastError = nil } })
+    }
+
+    private static func suggestedProjectName(in parent: URL) -> String {
+        let base = "My FPGA Project"
+        var candidate = base
+        var suffix = 2
+        while FileManager.default.fileExists(atPath: parent.appendingPathComponent(candidate, isDirectory: true).path) {
+            candidate = "\(base) \(suffix)"
+            suffix += 1
+        }
+        return candidate
     }
 }

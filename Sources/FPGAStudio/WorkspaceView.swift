@@ -16,7 +16,7 @@ struct WorkspaceView: View {
                     GuidedNextStepView()
                 }
 
-                VSplitView {
+                VStack(spacing: 0) {
                     EditorArea()
                         .frame(
                             minWidth: 0,
@@ -25,13 +25,15 @@ struct WorkspaceView: View {
                             maxHeight: .infinity
                         )
 
+                    Divider()
+
                     BottomPanel()
                         .frame(
                             minWidth: 0,
                             maxWidth: .infinity,
                             minHeight: 160,
                             idealHeight: 230,
-                            maxHeight: .infinity
+                            maxHeight: 230
                         )
                 }
                 .frame(

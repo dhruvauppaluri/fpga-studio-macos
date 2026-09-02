@@ -10,16 +10,8 @@ struct CodeEditor: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSScrollView {
-        // NSViewRepresentable is initially measured without a useful frame. Give
-        // TextKit a real document size so AppKit cannot collapse valid source to
-        // a zero-height, apparently read-only editor.
-        let initialSize = NSSize(width: 800, height: 600)
-        let textView = NSTextView(frame: NSRect(origin: .zero, size: initialSize))
+        let textView = NSTextView()
         textView.isRichText = false
-        textView.isEditable = true
-        textView.isSelectable = true
-        textView.drawsBackground = true
-        textView.backgroundColor = .textBackgroundColor
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
@@ -30,15 +22,10 @@ struct CodeEditor: NSViewRepresentable {
         textView.textContainerInset = NSSize(width: 10, height: 10)
         textView.delegate = context.coordinator
         textView.string = text
-        textView.minSize = NSSize(width: 0, height: initialSize.height)
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
-        textView.textContainer?.containerSize = NSSize(width: initialSize.width, height: CGFloat.greatestFiniteMagnitude)
         textView.textContainer?.widthTracksTextView = true
 
-        let scrollView = NSScrollView(frame: NSRect(origin: .zero, size: initialSize))
+        let scrollView = NSScrollView()
         scrollView.documentView = textView
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
@@ -52,7 +39,6 @@ struct CodeEditor: NSViewRepresentable {
         scrollView.rulersVisible = true
         context.coordinator.textView = textView
         context.coordinator.highlight(textView)
-        DispatchQueue.main.async { textView.window?.makeFirstResponder(textView) }
         return scrollView
     }
 
