@@ -194,7 +194,7 @@ private struct EditorArea: View {
                     HStack(spacing: 0) {
                         ForEach(workspace.documents) { document in
                             Button {
-                                workspace.selectedDocumentID = document.id
+                                workspace.selectDocument(document.id)
                             } label: {
                                 HStack(spacing: 7) {
                                     Image(systemName: "doc.text")
@@ -246,12 +246,13 @@ private struct EditorArea: View {
 
             if let document = workspace.selectedDocument {
                 CodeEditor(
-                    text: Binding(
-                        get: { document.text },
-                        set: { workspace.updateSelectedText($0) }
-                    ),
+                    documentID: document.id,
+                    text: document.text,
                     language: document.language,
-                    searchText: workspace.searchText
+                    searchText: workspace.searchText,
+                    didEdit: workspace.editorDidChange,
+                    registerBuffer: workspace.registerEditorBuffer,
+                    unregisterBuffer: workspace.unregisterEditorBuffer
                 )
                 .id(document.id)
                 .frame(

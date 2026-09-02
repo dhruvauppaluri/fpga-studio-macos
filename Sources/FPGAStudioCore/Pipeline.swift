@@ -84,12 +84,23 @@ public actor BuildPipeline {
         switch test.language {
         case .verilog, .systemVerilog:
             let compiler = try locator.require("iverilog")
+            let runtime = try locator.require("vvp")
             let executable = directory.appendingPathComponent("simulation")
             var arguments = ["-g2012", "-s", test.top, "-o", executable.path]
+            let ivlResources = compiler.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/ivl")
+            if FileManager.default.fileExists(atPath: ivlResources.path) {
+                arguments.insert(contentsOf: ["-B", ivlResources.path], at: 0)
+            }
             arguments.append(contentsOf: files.map(\.path))
             let compile = try await invoke("Icarus Verilog", compiler, arguments, directory, onEvent)
             log += compile.output
-            let run = try await invoke("Simulation", executable, [], directory, onEvent)
+            var runtimeArguments: [String] = []
+            let vvpModules = runtime.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/ivl")
+            if FileManager.default.fileExists(atPath: vvpModules.path) {
+                runtimeArguments += ["-M", vvpModules.path]
+            }
+            runtimeArguments.append(executable.path)
+            let run = try await invoke("Icarus Verilog runtime", runtime, runtimeArguments, directory, onEvent)
             log += run.output
         case .vhdl:
             let ghdl = try locator.require("ghdl")

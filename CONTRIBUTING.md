@@ -11,6 +11,10 @@ Thanks for helping test and improve FPGA Studio. The project currently targets A
 
 Icarus Verilog and Verilator enable the integration tests and development simulation flow. Yosys, GHDL with the Yosys plugin, nextpnr-mistral/Mistral, and openFPGALoader are required to exercise the complete Cyclone V build and programming flow.
 
+End-user releases must be packaged with the signed bootstrap described in the README. Never commit or share `Toolchains/toolchain-signing.key`. A release app containing `Toolchains/bootstrap.zip` without the matching signed manifest is intentionally rejected by the packaging script.
+
+Keep `THIRD_PARTY_NOTICES.md`, `ThirdPartyLicenses/`, and `ToolchainPatches/` current whenever a bundled dependency, version, or local source modification changes. Upstream copyright and license notices must never be removed from release artifacts.
+
 ## Proposing a change
 
 - Create a focused branch from `main`.

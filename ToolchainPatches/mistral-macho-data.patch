@@ -1,0 +1,76 @@
+diff --git a/libmistral/CMakeLists.txt b/libmistral/CMakeLists.txt
+index 1360656..47f317a 100644
+--- a/libmistral/CMakeLists.txt
++++ b/libmistral/CMakeLists.txt
+@@ -68,12 +68,29 @@ foreach(die e50f gx25f gt75f gt150f gt300f sx50f sx120f)
+        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/../generator/generator ${DATA}/${die}-r.txt.xz ${DATA}/${die}-l.txt.xz ${DATA}/${die}-d.txt.xz ${DATA}/${die}-p2r.txt ${DATA}/${die}-p2p.txt ${DATA}/${die}-inv.txt
+     )
+ 
+-    add_custom_command(
+-       OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/cvd-${die}-r.o
+-       WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+-       COMMAND ld -r -b binary -o cvd-${die}-r.o ${die}-r.bin
+-       DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${die}-r.bin
+-    )
++    if(APPLE)
++        add_custom_command(
++           OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/cvd-${die}-r.S
++           COMMAND ${PYTHON_EXECUTABLE} ${TOOLS}/bin_to_macho_asm.py
++                   ${CMAKE_CURRENT_BINARY_DIR}/${die}-r.bin
++                   ${CMAKE_CURRENT_BINARY_DIR}/cvd-${die}-r.S
++                   ${die}_r_bin
++           DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${die}-r.bin ${TOOLS}/bin_to_macho_asm.py
++        )
++        add_custom_command(
++           OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/cvd-${die}-r.o
++           COMMAND ${CMAKE_C_COMPILER} -c ${CMAKE_CURRENT_BINARY_DIR}/cvd-${die}-r.S
++                   -o ${CMAKE_CURRENT_BINARY_DIR}/cvd-${die}-r.o
++           DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/cvd-${die}-r.S
++        )
++    else()
++        add_custom_command(
++           OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/cvd-${die}-r.o
++           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
++           COMMAND ld -r -b binary -o cvd-${die}-r.o ${die}-r.bin
++           DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${die}-r.bin
++        )
++    endif()
+ 
+     list(APPEND mistral_SOURCES ${CMAKE_CURRENT_BINARY_DIR}/cvd-${die}-r.o)
+ 
+@@ -88,12 +105,29 @@ add_custom_command(
+    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/../generator/generator ${DATA}/driver-models.txt.xz
+ )
+ 
+-add_custom_command(
+-   OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/cv-global.o
+-   WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+-   COMMAND ld -r -b binary -o cv-global.o global.bin
+-   DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/global.bin
+-)
++if(APPLE)
++    add_custom_command(
++       OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/cv-global.S
++       COMMAND ${PYTHON_EXECUTABLE} ${TOOLS}/bin_to_macho_asm.py
++               ${CMAKE_CURRENT_BINARY_DIR}/global.bin
++               ${CMAKE_CURRENT_BINARY_DIR}/cv-global.S
++               global_bin
++       DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/global.bin ${TOOLS}/bin_to_macho_asm.py
++    )
++    add_custom_command(
++       OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/cv-global.o
++       COMMAND ${CMAKE_C_COMPILER} -c ${CMAKE_CURRENT_BINARY_DIR}/cv-global.S
++               -o ${CMAKE_CURRENT_BINARY_DIR}/cv-global.o
++       DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/cv-global.S
++    )
++else()
++    add_custom_command(
++       OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/cv-global.o
++       WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
++       COMMAND ld -r -b binary -o cv-global.o global.bin
++       DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/global.bin
++    )
++endif()
+ 
+ list(APPEND mistral_SOURCES ${CMAKE_CURRENT_BINARY_DIR}/cv-global.o)
+ 

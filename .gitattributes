@@ -1,0 +1,3 @@
+# Preserve upstream license texts and standard unified-diff context exactly.
+ThirdPartyLicenses/** -whitespace
+ToolchainPatches/*.patch -whitespace

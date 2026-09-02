@@ -51,6 +51,12 @@ final class WorkspaceController: ObservableObject {
     private var operation: Task<Void, Never>?
     private var powerActivity: NSObjectProtocol?
     private var lastBuildFingerprint: String?
+    private let documentSaver = DocumentSaveCoordinator()
+    private var activeEditorDocumentID: String?
+    private var activeEditorSnapshot: (@MainActor () -> String)?
+    private var autosaveTask: Task<Void, Never>?
+    private var editGenerations: [String: Int] = [:]
+    private var saveSessionIDs: [String: String] = [:]
 
     init() {
         do { board = try BundledResources.boardProfile() }
@@ -97,8 +103,14 @@ final class WorkspaceController: ObservableObject {
     }
 
     func openProject(at url: URL) {
+        Task {
+            guard await flushPendingEdits() else { return }
+            openProjectNow(at: url)
+        }
+    }
+
+    private func openProjectNow(at url: URL) {
         do {
-            saveAll()
             let loaded = try ProjectStore.load(from: url)
             project = loaded
             rootURL = url
@@ -113,13 +125,21 @@ final class WorkspaceController: ObservableObject {
             lastBuildFingerprint = nil
             boardConnected = false
             waveform = nil
+            editGenerations = [:]
+            saveSessionIDs = [:]
             remember(url)
-            if let first = loaded.sources.first { openSource(first) }
+            if let first = loaded.sources.first { loadSource(first) }
         } catch { lastError = error.localizedDescription }
     }
 
     func closeProject() {
-        saveAll()
+        Task {
+            guard await flushPendingEdits() else { return }
+            closeProjectNow()
+        }
+    }
+
+    private func closeProjectNow() {
         project = nil
         rootURL = nil
         documents = []
@@ -133,47 +153,148 @@ final class WorkspaceController: ObservableObject {
         lastBuildFingerprint = nil
         flashCandidate = nil
         boardConnected = false
+        editGenerations = [:]
+        saveSessionIDs = [:]
     }
 
     func createProject(template: ProjectTemplate, language: HDLLanguage, name: String, parent: URL) {
-        do {
-            let safeName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !safeName.isEmpty, !safeName.contains("/") else { throw FPGAStudioError.invalidProject("Choose a simple project name.") }
-            let destination = parent.appendingPathComponent(safeName, isDirectory: true)
-            _ = try ProjectTemplateFactory.create(template, language: language, name: safeName, at: destination)
-            showingNewProject = false
-            openProject(at: destination)
-        } catch { lastError = error.localizedDescription }
+        Task {
+            guard await flushPendingEdits() else { return }
+            do {
+                let safeName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !safeName.isEmpty, !safeName.contains("/") else { throw FPGAStudioError.invalidProject("Choose a simple project name.") }
+                let destination = parent.appendingPathComponent(safeName, isDirectory: true)
+                _ = try ProjectTemplateFactory.create(template, language: language, name: safeName, at: destination)
+                showingNewProject = false
+                openProjectNow(at: destination)
+            } catch { lastError = error.localizedDescription }
+        }
     }
 
     func openSource(_ source: ProjectSource) {
+        Task {
+            guard await flushPendingEdits() else { return }
+            loadSource(source)
+        }
+    }
+
+    private func loadSource(_ source: ProjectSource) {
         guard let rootURL else { return }
         do {
             let url = try ProjectStore.resolve(source.path, under: rootURL)
             if !documents.contains(where: { $0.id == source.path }) {
                 documents.append(.init(id: source.path, url: url, language: source.language, text: try String(contentsOf: url, encoding: .utf8)))
+                editGenerations[source.path] = 0
+                saveSessionIDs[source.path] = "\(source.path)#\(UUID().uuidString)"
             }
             selectedDocumentID = source.path
         } catch { lastError = error.localizedDescription }
     }
 
-    func updateSelectedText(_ text: String) {
-        guard let id = selectedDocumentID, let index = documents.firstIndex(where: { $0.id == id }) else { return }
-        documents[index].text = text
-        documents[index].isDirty = true
-        invalidateGeneratedResults()
-        do {
-            try Data(text.utf8).write(to: documents[index].url, options: .atomic)
-            documents[index].isDirty = false
-        } catch { lastError = error.localizedDescription }
+    func selectDocument(_ documentID: String) {
+        guard documentID != selectedDocumentID else { return }
+        Task {
+            guard await flushPendingEdits() else { return }
+            selectedDocumentID = documentID
+        }
     }
 
-    func saveAll() {
-        for index in documents.indices where documents[index].isDirty {
+    func registerEditorBuffer(
+        documentID: String,
+        snapshot: @escaping @MainActor () -> String
+    ) {
+        activeEditorDocumentID = documentID
+        activeEditorSnapshot = snapshot
+    }
+
+    func unregisterEditorBuffer(documentID: String) {
+        guard activeEditorDocumentID == documentID else { return }
+        activeEditorDocumentID = nil
+        activeEditorSnapshot = nil
+    }
+
+    func editorDidChange(documentID: String) {
+        guard let index = documents.firstIndex(where: { $0.id == documentID }) else { return }
+        editGenerations[documentID, default: 0] += 1
+        if !documents[index].isDirty {
+            documents[index].isDirty = true
+            invalidateGeneratedResults()
+        }
+        autosaveTask?.cancel()
+        autosaveTask = Task { [weak self] in
             do {
-                try Data(documents[index].text.utf8).write(to: documents[index].url, options: .atomic)
-                documents[index].isDirty = false
-            } catch { lastError = error.localizedDescription }
+                try await Task.sleep(for: .milliseconds(300))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, let self,
+                  self.activeEditorDocumentID == documentID else { return }
+            _ = await self.commitActiveEditor()
+        }
+    }
+
+    func save() {
+        Task { _ = await flushPendingEdits() }
+    }
+
+    @discardableResult
+    func flushPendingEdits() async -> Bool {
+        autosaveTask?.cancel()
+        autosaveTask = nil
+
+        if let activeEditorDocumentID {
+            var attempts = 0
+            while documents.first(where: { $0.id == activeEditorDocumentID })?.isDirty == true,
+                  attempts < 3 {
+                guard await commitActiveEditor() else { return false }
+                attempts += 1
+            }
+            guard documents.first(where: { $0.id == activeEditorDocumentID })?.isDirty != true else {
+                return false
+            }
+        }
+
+        for document in documents where document.isDirty && document.id != activeEditorDocumentID {
+            let generation = editGenerations[document.id, default: 0]
+            if !(await persist(documentID: document.id, text: document.text, generation: generation)) {
+                return false
+            }
+        }
+        return true
+    }
+
+    private func commitActiveEditor() async -> Bool {
+        guard let documentID = activeEditorDocumentID,
+              let snapshot = activeEditorSnapshot,
+              let index = documents.firstIndex(where: { $0.id == documentID }),
+              documents[index].isDirty else { return true }
+        let text = snapshot()
+        documents[index].text = text
+        let generation = editGenerations[documentID, default: 0]
+        return await persist(documentID: documentID, text: text, generation: generation)
+    }
+
+    private func persist(documentID: String, text: String, generation: Int) async -> Bool {
+        guard let index = documents.firstIndex(where: { $0.id == documentID }) else { return true }
+        let url = documents[index].url
+        do {
+            _ = try await documentSaver.write(
+                documentID: saveSessionIDs[documentID] ?? documentID,
+                revision: generation,
+                text: text,
+                to: url
+            )
+            if editGenerations[documentID, default: 0] == generation,
+               let currentIndex = documents.firstIndex(where: { $0.id == documentID }) {
+                documents[currentIndex].isDirty = false
+            }
+            return true
+        } catch {
+            if let currentIndex = documents.firstIndex(where: { $0.id == documentID }) {
+                documents[currentIndex].isDirty = true
+            }
+            lastError = "Could not save \(url.lastPathComponent): \(error.localizedDescription)"
+            return false
         }
     }
 
@@ -213,18 +334,22 @@ final class WorkspaceController: ObservableObject {
                 return
             }
         }
-        saveAll()
         isRunning = true
-        log = ""
-        diagnostics = []
-        artifacts = []
-        selectedBottomTab = action.isSimulation ? "Simulation" : "Build Log"
-        if action.isFlash {
-            AppLifecycleDelegate.flashWriteActive = true
-            powerActivity = ProcessInfo.processInfo.beginActivity(options: [.idleSystemSleepDisabled, .suddenTerminationDisabled, .userInitiated], reason: "Programming C5G persistent flash")
-        }
         operation = Task { [weak self] in
             guard let self else { return }
+            guard await flushPendingEdits() else {
+                finishOperation()
+                return
+            }
+            guard !Task.isCancelled else { finishOperation(); return }
+            log = ""
+            diagnostics = []
+            artifacts = []
+            selectedBottomTab = action.isSimulation ? "Simulation" : "Build Log"
+            if action.isFlash {
+                AppLifecycleDelegate.flashWriteActive = true
+                powerActivity = ProcessInfo.processInfo.beginActivity(options: [.idleSystemSleepDisabled, .suddenTerminationDisabled, .userInitiated], reason: "Programming C5G persistent flash")
+            }
             let outcome = await pipeline.run(action: action, project: project, root: rootURL, board: board) { stage, message in
                 Task { @MainActor [weak self] in
                     self?.stage = stage == .idle ? self?.stage ?? .idle : stage

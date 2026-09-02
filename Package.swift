@@ -22,6 +22,10 @@ let package = Package(
         .testTarget(
             name: "FPGAStudioCoreTests",
             dependencies: ["FPGAStudioCore"]
+        ),
+        .testTarget(
+            name: "FPGAStudioTests",
+            dependencies: ["FPGAStudio", "FPGAStudioCore"]
         )
     ]
 )

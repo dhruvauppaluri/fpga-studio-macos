@@ -2,6 +2,99 @@ import CryptoKit
 import XCTest
 @testable import FPGAStudioCore
 
+final class EditorSupportTests: XCTestCase {
+    func testLogicalLineIndexHandlesBlankAndTrailingLines() {
+        let empty = LogicalLineIndex("")
+        XCTAssertEqual(empty.lineCount, 1)
+        XCTAssertEqual(empty.start(ofLine: 1), 0)
+
+        let trailing = LogicalLineIndex("alpha\nbeta\n")
+        XCTAssertEqual(trailing.lineCount, 3)
+        XCTAssertEqual(trailing.start(ofLine: 3), 11)
+        XCTAssertEqual(trailing.lineNumber(atUTF16Offset: 11), 3)
+    }
+
+    func testLogicalLineIndexAppliesInsertionDeletionAndMultilinePaste() {
+        var text = "alpha\nbeta"
+        var index = LogicalLineIndex(text)
+
+        text = "alpha\n\nbeta"
+        index.applyEdit(to: text, editedRange: NSRange(location: 6, length: 1), changeInLength: 1)
+        XCTAssertEqual(index.lineStarts, [0, 6, 7])
+
+        text = "alpha\nbeta"
+        index.applyEdit(to: text, editedRange: NSRange(location: 5, length: 0), changeInLength: -1)
+        XCTAssertEqual(index.lineStarts, [0, 6])
+
+        text = "alpha\nbeta\none\ntwo\n"
+        index.applyEdit(to: text, editedRange: NSRange(location: 10, length: 9), changeInLength: 9)
+        XCTAssertEqual(index.lineStarts, [0, 6, 11, 15, 19])
+    }
+
+    func testLogicalLineIndexStaysFastAtOneHundredThousandLines() {
+        let text = String(repeating: "x\n", count: 99_999) + "x"
+        var index = LogicalLineIndex(text)
+        XCTAssertEqual(index.lineCount, 100_000)
+
+        let mutable = NSMutableString(string: text)
+        let insertion = 100_000
+        mutable.insert("\n", at: insertion)
+        let updated = mutable as String
+        let start = ContinuousClock.now
+        index.applyEdit(to: updated, editedRange: NSRange(location: insertion, length: 1), changeInLength: 1)
+        let elapsed = ContinuousClock.now - start
+
+        XCTAssertEqual(index.lineCount, 100_001)
+        XCTAssertLessThan(elapsed, .milliseconds(100))
+    }
+
+    func testSyntaxLexerPropagatesBlockCommentsAndFindsTokens() {
+        let first = HDLSyntaxLexer.lexLine(
+            "logic ready; /* explanation",
+            language: .systemVerilog,
+            startsInBlockComment: false
+        )
+        XCTAssertTrue(first.endsInBlockComment)
+        XCTAssertTrue(first.tokens.contains { $0.kind == .keyword })
+        XCTAssertTrue(first.tokens.contains { $0.kind == .comment })
+
+        let second = HDLSyntaxLexer.lexLine(
+            "continued */ module core;",
+            language: .systemVerilog,
+            startsInBlockComment: first.endsInBlockComment
+        )
+        XCTAssertFalse(second.endsInBlockComment)
+        XCTAssertTrue(second.tokens.contains { $0.kind == .comment })
+        XCTAssertTrue(second.tokens.contains { $0.kind == .keyword })
+    }
+
+    func testSyntaxLexerHandlesVHDLCommentsStringsAndNumbers() {
+        let result = HDLSyntaxLexer.lexLine(
+            "signal count : integer := 42; -- \"ignored\" 99",
+            language: .vhdl,
+            startsInBlockComment: false
+        )
+        XCTAssertTrue(result.tokens.contains { $0.kind == .keyword })
+        XCTAssertTrue(result.tokens.contains { $0.kind == .number })
+        XCTAssertTrue(result.tokens.contains { $0.kind == .comment })
+        XCTAssertFalse(result.endsInBlockComment)
+    }
+
+    func testDocumentSaveCoordinatorRejectsAnOlderRevision() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("fpga-editor-save-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("top.sv")
+        let saver = DocumentSaveCoordinator()
+
+        let acceptedNew = try await saver.write(documentID: "top.sv", revision: 2, text: "new", to: url)
+        let acceptedOld = try await saver.write(documentID: "top.sv", revision: 1, text: "old", to: url)
+        XCTAssertTrue(acceptedNew)
+        XCTAssertFalse(acceptedOld)
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "new")
+    }
+}
+
 final class ManifestTests: XCTestCase {
     func testUnknownManifestFieldsSurviveRoundTrip() throws {
         let json = """
@@ -456,12 +549,40 @@ final class ProcessTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: FileManager.default.temporaryDirectory.appendingPathComponent("should-not-exist").path))
     }
 
+    func testManagedProcessPathDoesNotAddPackageManagerFallbacks() async throws {
+        let service = ToolProcessService()
+        let invocation = ToolInvocation(
+            tool: "env",
+            executableURL: URL(fileURLWithPath: "/usr/bin/env"),
+            arguments: [],
+            workingDirectory: FileManager.default.temporaryDirectory
+        )
+        let result = try await service.run(invocation)
+        let pathLine = try XCTUnwrap(result.output.split(separator: "\n").first { $0.hasPrefix("PATH=") })
+        XCTAssertFalse(pathLine.contains("/opt/homebrew/bin"))
+        XCTAssertFalse(pathLine.contains("/usr/local/bin"))
+    }
+
     func testBlinkySimulationIntegrationWhenIcarusIsInstalled() async throws {
         let locator = ToolchainLocator(managedRoot: FileManager.default.temporaryDirectory.appendingPathComponent("unused-managed-root"))
         guard locator.resolve("iverilog") != nil else { throw XCTSkip("Icarus Verilog is not installed") }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("fpga-simulation-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let project = try ProjectTemplateFactory.create(.blinky, language: .systemVerilog, name: "Blinky", at: root)
+        let pipeline = BuildPipeline(locator: locator)
+        let outcome = await pipeline.run(action: .simulate(test: try XCTUnwrap(project.tests.first)), project: project, root: root, board: try BundledResources.boardProfile())
+        XCTAssertTrue(outcome.succeeded, outcome.log + "\n" + outcome.diagnostics.map(\.message).joined(separator: "\n"))
+        XCTAssertTrue(outcome.artifacts.contains { $0.kind == "VCD waveform" })
+        let vcd = try XCTUnwrap(outcome.artifacts.first).path
+        XCTAssertGreaterThan(try VCDParser.parse(url: URL(fileURLWithPath: vcd)).signals.count, 0)
+    }
+
+    func testBlinkyVHDLSimulationIntegrationWhenGHDLIsInstalled() async throws {
+        let locator = ToolchainLocator(managedRoot: FileManager.default.temporaryDirectory.appendingPathComponent("unused-managed-root"))
+        guard locator.resolve("ghdl") != nil else { throw XCTSkip("GHDL is not installed") }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("fpga-vhdl-simulation-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectTemplateFactory.create(.blinky, language: .vhdl, name: "BlinkyVHDL", at: root)
         let pipeline = BuildPipeline(locator: locator)
         let outcome = await pipeline.run(action: .simulate(test: try XCTUnwrap(project.tests.first)), project: project, root: root, board: try BundledResources.boardProfile())
         XCTAssertTrue(outcome.succeeded, outcome.log + "\n" + outcome.diagnostics.map(\.message).joined(separator: "\n"))
@@ -485,5 +606,85 @@ final class ProcessTests: XCTestCase {
             guard case .unsupported(let message) = error else { return XCTFail("Unexpected error: \(error)") }
             XCTAssertTrue(message.contains("unsigned toolchain"))
         }
+    }
+
+    func testSignedToolchainArchiveMustContainEveryRuntimeExecutable() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("fpga-toolchain-incomplete-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        var manifest = try BundledResources.toolchainManifest()
+        let archive = try makeSignedToolchainArchive(root: root, manifest: &manifest, excluding: "mistral-cv")
+        let manager = ToolchainManager(root: root.appendingPathComponent("installed"))
+
+        do {
+            try await manager.install(archive: archive, manifest: manifest)
+            XCTFail("An incomplete signed archive should not install")
+        } catch let error as FPGAStudioError {
+            guard case .invalidProject(let message) = error else { return XCTFail("Unexpected error: \(error)") }
+            XCTAssertTrue(message.contains("mistral-cv"))
+        }
+    }
+
+    func testSignedToolchainArchiveRequiresYosysABCCompanion() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("fpga-toolchain-no-abc-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        var manifest = try BundledResources.toolchainManifest()
+        let archive = try makeSignedToolchainArchive(root: root, manifest: &manifest, excluding: "yosys-abc")
+        let manager = ToolchainManager(root: root.appendingPathComponent("installed"))
+
+        do {
+            try await manager.install(archive: archive, manifest: manifest)
+            XCTFail("A signed archive without yosys-abc should not install")
+        } catch let error as FPGAStudioError {
+            guard case .invalidProject(let message) = error else { return XCTFail("Unexpected error: \(error)") }
+            XCTAssertTrue(message.contains("yosys-abc"))
+        }
+    }
+
+    func testCompleteSignedToolchainArchiveInstallsAndActivates() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("fpga-toolchain-complete-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        var manifest = try BundledResources.toolchainManifest()
+        manifest.version = "test-\(UUID().uuidString)"
+        let archive = try makeSignedToolchainArchive(root: root, manifest: &manifest)
+        let installed = root.appendingPathComponent("installed")
+        let manager = ToolchainManager(root: installed)
+
+        try await manager.install(archive: archive, manifest: manifest)
+
+        let locator = ToolchainLocator(managedRoot: installed)
+        XCTAssertNotNil(locator.resolve("ghdl"))
+        XCTAssertNotNil(locator.resolve("ghdl1-llvm"))
+        XCTAssertNotNil(locator.resolve("yosys-abc"))
+        XCTAssertNotNil(locator.resolve("vvp"))
+        XCTAssertNotNil(locator.resolve("verilator_bin"))
+        let installedVersions = try await manager.installedVersions()
+        XCTAssertEqual(installedVersions, [manifest.version])
+    }
+
+    private func makeSignedToolchainArchive(root: URL, manifest: inout ToolchainManifest, excluding excluded: String? = nil) throws -> URL {
+        let payload = root.appendingPathComponent("payload")
+        let bin = payload.appendingPathComponent("bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        var executables = Set(manifest.tools.map(\.executable))
+        executables.formUnion(["yosys-abc", "vvp", "verilator_bin", "ghdl1-llvm"])
+        for executable in executables where executable != excluded {
+            let url = bin.appendingPathComponent(executable)
+            try Data("#!/bin/sh\nexit 0\n".utf8).write(to: url)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        }
+        let archive = root.appendingPathComponent("toolchain.zip")
+        let ditto = Process()
+        ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        ditto.arguments = ["-c", "-k", payload.path, archive.path]
+        try ditto.run()
+        ditto.waitUntilExit()
+        XCTAssertEqual(ditto.terminationStatus, 0)
+
+        let archiveData = try Data(contentsOf: archive)
+        let key = Curve25519.Signing.PrivateKey()
+        manifest.archiveSHA256 = SHA256.hash(data: archiveData).map { String(format: "%02x", $0) }.joined()
+        manifest.archiveSignature = try key.signature(for: archiveData).base64EncodedString()
+        manifest.signingPublicKey = key.publicKey.rawRepresentation.base64EncodedString()
+        return archive
     }
 }

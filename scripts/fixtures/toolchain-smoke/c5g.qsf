@@ -1,0 +1,5 @@
+set_global_assignment -name DEVICE 5CGXFC5C6F27C7
+set_location_assignment PIN_R20 -to CLOCK_50_B5B
+set_instance_assignment -name IO_STANDARD "2.5 V" -to CLOCK_50_B5B
+set_location_assignment PIN_L7 -to LEDG0
+set_instance_assignment -name IO_STANDARD "2.5 V" -to LEDG0

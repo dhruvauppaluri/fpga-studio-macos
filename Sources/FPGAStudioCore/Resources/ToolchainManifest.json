@@ -7,12 +7,12 @@
   "archiveSignature": null,
   "signingPublicKey": null,
   "tools": [
-    {"name":"Yosys","executable":"yosys","version":"pinned-release","sourceRevision":"release","license":"ISC","requiredFor":["validation","synthesis"]},
-    {"name":"nextpnr-mistral","executable":"nextpnr-mistral","version":"pinned-release","sourceRevision":"release","license":"ISC","requiredFor":["place-and-route","bitstream"]},
-    {"name":"Mistral","executable":"mistral-cv","version":"pinned-release","sourceRevision":"release","license":"BSD-3-Clause","requiredFor":["Cyclone V device database"]},
-    {"name":"openFPGALoader","executable":"openFPGALoader","version":"pinned-release","sourceRevision":"release","license":"Apache-2.0","requiredFor":["SRAM programming","flash programming"]},
-    {"name":"Icarus Verilog","executable":"iverilog","version":"pinned-release","sourceRevision":"release","license":"GPL-2.0-or-later","requiredFor":["Verilog simulation"]},
-    {"name":"Verilator","executable":"verilator","version":"pinned-release","sourceRevision":"release","license":"LGPL-3.0-or-later OR Artistic-2.0","requiredFor":["Verilog lint"]},
-    {"name":"GHDL","executable":"ghdl","version":"pinned-release","sourceRevision":"release","license":"GPL-2.0-or-later","requiredFor":["VHDL simulation","VHDL synthesis"]}
+    {"name":"Yosys","executable":"yosys","version":"0.68+post","sourceRevision":"c12172fbae8af5e20f6fb52e3d4e92d56ed587b6","license":"ISC","requiredFor":["validation","synthesis"]},
+    {"name":"nextpnr-mistral","executable":"nextpnr-mistral","version":"8dbcee5","sourceRevision":"8dbcee5c3c4415770b6fd06d5ccb2db89545b8ec+fpga-studio-patch","license":"ISC","requiredFor":["place-and-route","bitstream"]},
+    {"name":"Mistral","executable":"mistral-cv","version":"d509238","sourceRevision":"d509238a203aadbb76291ab06543a401df91cf54+fpga-studio-patch","license":"BSD-3-Clause","requiredFor":["Cyclone V device database"]},
+    {"name":"openFPGALoader","executable":"openFPGALoader","version":"1.1.1","sourceRevision":"v1.1.1","license":"Apache-2.0","requiredFor":["SRAM programming","flash programming"]},
+    {"name":"Icarus Verilog","executable":"iverilog","version":"13.0","sourceRevision":"v13_0","license":"GPL-2.0-or-later AND LGPL-2.1-or-later","requiredFor":["Verilog simulation"]},
+    {"name":"Verilator","executable":"verilator","version":"5.050","sourceRevision":"v5.050","license":"LGPL-3.0-only OR Artistic-2.0","requiredFor":["Verilog lint"]},
+    {"name":"GHDL","executable":"ghdl","version":"6.0.0","sourceRevision":"e589c698c","license":"GPL-2.0-or-later","requiredFor":["VHDL simulation","VHDL synthesis"]}
   ]
 }

@@ -16,6 +16,11 @@ struct FPGAStudioApp: App {
             }
             .environmentObject(workspace)
             .frame(minWidth: 980, minHeight: 680)
+            .onAppear {
+                appDelegate.prepareForTermination = {
+                    await workspace.flushPendingEdits()
+                }
+            }
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified(showsTitle: true))
@@ -25,6 +30,11 @@ struct FPGAStudioApp: App {
                     .keyboardShortcut("n")
                 Button("Open Project…") { workspace.chooseProject() }
                     .keyboardShortcut("o")
+            }
+            CommandGroup(replacing: .saveItem) {
+                Button("Save") { workspace.save() }
+                    .keyboardShortcut("s")
+                    .disabled(workspace.project == nil)
             }
             CommandMenu("FPGA") {
                 Button("Validate") { workspace.perform(.validate) }
@@ -63,6 +73,8 @@ struct FPGAStudioApp: App {
 @MainActor
 final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
     static var flashWriteActive = false
+    var prepareForTermination: (@MainActor () async -> Bool)?
+    private var terminationInProgress = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Make sure macOS treats FPGA Studio as a normal foreground app.
@@ -80,6 +92,15 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        Self.flashWriteActive ? .terminateCancel : .terminateNow
+        guard !Self.flashWriteActive else { return .terminateCancel }
+        guard let prepareForTermination else { return .terminateNow }
+        guard !terminationInProgress else { return .terminateLater }
+        terminationInProgress = true
+        Task { @MainActor [weak self] in
+            let saved = await prepareForTermination()
+            self?.terminationInProgress = false
+            sender.reply(toApplicationShouldTerminate: saved)
+        }
+        return .terminateLater
     }
 }

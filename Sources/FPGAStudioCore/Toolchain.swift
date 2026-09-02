@@ -115,7 +115,7 @@ public actor ToolProcessService {
         let bin = executable.deletingLastPathComponent()
         let prefix = bin.deletingLastPathComponent()
         var result: [String: String] = [
-            "PATH": bin.path + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            "PATH": bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin",
             "LANG": "en_US.UTF-8",
             "LC_ALL": "en_US.UTF-8",
             "TMPDIR": FileManager.default.temporaryDirectory.path,
@@ -181,6 +181,9 @@ public actor ToolchainManager {
     }
 
     public func install(archive: URL, manifest: ToolchainManifest) async throws {
+        guard !manifest.version.isEmpty, !manifest.version.contains("/"), !manifest.version.contains("..") else {
+            throw FPGAStudioError.unsafePath(manifest.version)
+        }
         let archiveData = try Data(contentsOf: archive)
         guard let expected = manifest.archiveSHA256, !expected.isEmpty,
               let encodedSignature = manifest.archiveSignature, !encodedSignature.isEmpty,
@@ -204,6 +207,7 @@ public actor ToolchainManager {
         guard FileManager.default.fileExists(atPath: staging.appendingPathComponent("bin").path) else {
             throw FPGAStudioError.invalidProject("Toolchain archive does not contain a bin directory.")
         }
+        try validateArchiveContents(staging, manifest: manifest)
         let destination = root.appendingPathComponent(manifest.version, isDirectory: true)
         if FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.removeItem(at: destination) }
         try FileManager.default.moveItem(at: staging, to: destination)
@@ -238,5 +242,32 @@ public actor ToolchainManager {
 
     private func versionArguments(for executable: String) -> [String] {
         executable == "iverilog" ? ["-V"] : ["--version"]
+    }
+
+    private func validateArchiveContents(_ staging: URL, manifest: ToolchainManifest) throws {
+        var required = Set(manifest.tools.map(\.executable))
+        if required.contains("yosys") { required.insert("yosys-abc") }
+        if required.contains("iverilog") { required.insert("vvp") }
+        if required.contains("verilator") { required.insert("verilator_bin") }
+        if required.contains("ghdl") { required.insert("ghdl1-llvm") }
+
+        let stagingPath = staging.standardizedFileURL.path + "/"
+        var missing: [String] = []
+        for executable in required.sorted() {
+            guard !executable.isEmpty,
+                  executable == URL(fileURLWithPath: executable).lastPathComponent,
+                  executable != ".", executable != ".." else {
+                throw FPGAStudioError.unsafePath(executable)
+            }
+            let candidate = staging.appendingPathComponent("bin/\(executable)")
+            let resolvedPath = candidate.resolvingSymlinksInPath().standardizedFileURL.path
+            guard resolvedPath.hasPrefix(stagingPath), FileManager.default.isExecutableFile(atPath: candidate.path) else {
+                missing.append(executable)
+                continue
+            }
+        }
+        guard missing.isEmpty else {
+            throw FPGAStudioError.invalidProject("Toolchain archive is incomplete. Missing executable files: \(missing.joined(separator: ", ")).")
+        }
     }
 }

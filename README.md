@@ -4,6 +4,18 @@ FPGA Studio is a native Apple-silicon macOS IDE for portable VHDL, Verilog, and 
 
 The app uses Swift 6, SwiftUI, and a TextKit/AppKit source editor. Projects remain ordinary folders with a versioned `fpga-project.json`, QSF constraints, HDL sources, tests, and deterministic artifacts under `.fpga/build`.
 
+## Download
+
+Go to **[Releases](../../releases/latest)** and download **FPGA Studio.dmg**. Open the DMG and drag FPGA Studio into Applications — that's it.
+
+The complete FPGA synthesis toolchain (Yosys, nextpnr-mistral, openFPGALoader, Icarus Verilog, Verilator, GHDL, and the GHDL-Yosys plugin) is bundled inside the app. **No Homebrew, no manual tool installation, no terminal commands required.** On first launch the app silently unpacks and activates the toolchain into `~/Library/Application Support/FPGA Studio/`.
+
+FPGA Studio is built on excellent open-source FPGA tools. Their authors, exact source revisions, licenses, and the small macOS compatibility patches used for this build are documented in [Third-Party Software Notices](THIRD_PARTY_NOTICES.md). Complete license texts ship in the repository, app, toolchain archive, and DMG.
+
+> **First launch (ad-hoc signed):** Since this build is not yet notarized with Apple, macOS will show a warning. Right-click the app → **Open** → click **Open** in the dialog. You only need to do this once.
+
+Requires Apple Silicon (M1 or later) and macOS 15 Sequoia or newer.
+
 ## Included experience
 
 - Native welcome window, unified toolbar, project navigator, source tabs, inspector, issues, logs, simulation, waveform, and programmer panels.
@@ -49,13 +61,37 @@ The repository is intended to stay private during early hardware validation. Add
 
 ## Toolchain archive
 
-During development, executables are discovered in the active managed toolchain, `/opt/homebrew/bin`, `/usr/local/bin`, and system paths. To package installed arm64 tools and their relocatable libraries/resources:
+During development, executables are discovered in the active managed toolchain, `/opt/homebrew/bin`, `/usr/local/bin`, and system paths. Distribution builds carry one signed bootstrap archive inside the app, so customers receive the complete FPGA toolchain with the app and do not need Homebrew. On first launch, FPGA Studio verifies the archive and atomically installs it into Application Support.
+
+Create the release signing key once and keep it outside version control (the `Toolchains` directory is ignored):
 
 ```sh
-./scripts/package-toolchain.sh dist/fpga-studio-toolchain-arm64.zip
+swift scripts/toolchain-signing.swift generate Toolchains/toolchain-signing.key
 ```
 
-Import the archive from **Settings → Toolchain → Install Toolchain Archive**. A production release can place a verified archive at `Toolchains/bootstrap.zip` before app packaging; it will then be copied into the application resources for first-launch bootstrap installation. Release metadata should replace the development manifest’s null checksum/signature fields.
+On the arm64 release machine, install/build every pinned backend, including `ghdl-yosys-plugin`, then package and sign the complete bootstrap:
+
+```sh
+TOOLCHAIN_SIGNING_PRIVATE_KEY_FILE=Toolchains/toolchain-signing.key \
+  ./scripts/package-toolchain.sh
+./scripts/package-app.sh
+```
+
+The packager refuses to produce a release if a declared executable, Icarus `vvp`, Verilator's native runtime, GHDL's LLVM driver, the Yosys GHDL plugin, a relocatable resource directory, the archive signature, or a bundle smoke check is missing. It writes `Toolchains/bootstrap.zip` and its signed `Toolchains/ToolchainManifest.json`; `package-app.sh` verifies that pair before embedding it. The private key is never placed in the archive or app.
+
+Create a distribution DMG and publish a release:
+
+```sh
+./scripts/make-dmg.sh
+./scripts/publish-release.sh 2026.09.1
+```
+
+`publish-release.sh` runs the full pipeline (toolchain → app → DMG), tags the commit, and creates a GitHub Release with the DMG attached.
+Before creating the DMG, it extracts the app's embedded archive into an isolated temporary prefix and runs Verilog/VHDL simulation, synthesis, and Cyclone V place-and-route with Homebrew absent from `PATH`.
+
+The release gate also verifies that the complete third-party notice and license set is present. Do not distribute a toolchain build after removing those materials.
+
+For development-only imports, use **Settings → Toolchain → Install Toolchain Archive…** with an archive signed by the manifest packaged in that build.
 
 ## Backend boundary
 
