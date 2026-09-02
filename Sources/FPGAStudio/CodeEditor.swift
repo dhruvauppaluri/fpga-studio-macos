@@ -9,8 +9,9 @@ struct CodeEditor: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSTextView.scrollableTextView()
+    func makeNSView(context: Context) -> CodeEditorContainerView {
+        let containerView = CodeEditorContainerView()
+        let scrollView = containerView.scrollView
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
@@ -18,10 +19,7 @@ struct CodeEditor: NSViewRepresentable {
         scrollView.drawsBackground = true
         scrollView.backgroundColor = .textBackgroundColor
 
-        guard let textView = scrollView.documentView as? NSTextView else {
-            assertionFailure("NSTextView.scrollableTextView() did not provide a text view")
-            return scrollView
-        }
+        let textView = containerView.textView
         textView.isRichText = false
         textView.isEditable = true
         textView.isSelectable = true
@@ -42,18 +40,14 @@ struct CodeEditor: NSViewRepresentable {
         textView.autoresizingMask = [.width]
         textView.textContainer?.widthTracksTextView = true
 
-        let ruler = LineNumberRulerView(textView: textView)
-        scrollView.verticalRulerView = ruler
-        scrollView.hasVerticalRuler = true
-        scrollView.rulersVisible = true
         context.coordinator.textView = textView
         context.coordinator.highlight(textView)
-        return scrollView
+        return containerView
     }
 
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+    func updateNSView(_ containerView: CodeEditorContainerView, context: Context) {
         context.coordinator.parent = self
-        guard let textView = scrollView.documentView as? NSTextView else { return }
+        let textView = containerView.textView
         if textView.string != text {
             let selection = textView.selectedRange()
             textView.string = text
@@ -61,6 +55,7 @@ struct CodeEditor: NSViewRepresentable {
             context.coordinator.highlight(textView)
         }
         context.coordinator.highlightSearch(textView)
+        containerView.gutterView.needsDisplay = true
     }
 
     @MainActor
@@ -74,7 +69,7 @@ struct CodeEditor: NSViewRepresentable {
             guard !highlighting, let textView else { return }
             parent.text = textView.string
             highlight(textView)
-            textView.enclosingScrollView?.verticalRulerView?.needsDisplay = true
+            (textView.enclosingScrollView?.superview as? CodeEditorContainerView)?.gutterView.needsDisplay = true
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
@@ -134,24 +129,88 @@ struct CodeEditor: NSViewRepresentable {
     }
 }
 
-final class LineNumberRulerView: NSRulerView {
+final class CodeEditorContainerView: NSView {
+    static let gutterWidth: CGFloat = 46
+
+    let scrollView: NSScrollView
+    let textView: NSTextView
+    let gutterView: LineNumberGutterView
+
+    override init(frame frameRect: NSRect) {
+        let scrollView = NSTextView.scrollableTextView()
+        guard let textView = scrollView.documentView as? NSTextView else {
+            fatalError("NSTextView.scrollableTextView() did not provide a text view")
+        }
+        self.scrollView = scrollView
+        self.textView = textView
+        self.gutterView = LineNumberGutterView(textView: textView)
+        super.init(frame: frameRect)
+
+        addSubview(gutterView)
+        addSubview(scrollView)
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(scrollBoundsChanged),
+            name: NSView.boundsDidChangeNotification,
+            object: scrollView.contentView
+        )
+    }
+
+    convenience init() {
+        self.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    override func layout() {
+        super.layout()
+        let gutterWidth = min(Self.gutterWidth, bounds.width)
+        gutterView.frame = NSRect(x: 0, y: 0, width: gutterWidth, height: bounds.height)
+        scrollView.frame = NSRect(x: gutterWidth, y: 0, width: max(0, bounds.width - gutterWidth), height: bounds.height)
+    }
+
+    @objc private func scrollBoundsChanged() {
+        gutterView.needsDisplay = true
+    }
+}
+
+final class LineNumberGutterView: NSView {
     weak var textView: NSTextView?
+
     init(textView: NSTextView) {
         self.textView = textView
-        super.init(scrollView: textView.enclosingScrollView, orientation: .verticalRuler)
-        clientView = textView
-        ruleThickness = 46
+        super.init(frame: .zero)
     }
-    required init(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    override func drawHashMarksAndLabels(in rect: NSRect) {
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
         guard let textView, let layout = textView.layoutManager, let container = textView.textContainer else { return }
-        NSColor.controlBackgroundColor.setFill(); rect.fill()
+        NSColor.controlBackgroundColor.setFill()
+        dirtyRect.fill()
+
+        NSColor.separatorColor.setFill()
+        NSRect(x: bounds.maxX - 1, y: dirtyRect.minY, width: 1, height: dirtyRect.height).fill()
+
         let visible = textView.enclosingScrollView?.contentView.bounds ?? .zero
         let glyphRange = layout.glyphRange(forBoundingRect: visible, in: container)
         let text = textView.string as NSString
         var lineNumber = 1
-        if glyphRange.location > 0 { lineNumber += text.substring(to: glyphRange.location).filter { $0 == "\n" }.count }
+        if glyphRange.location > 0 {
+            let firstCharacter = layout.characterIndexForGlyph(at: glyphRange.location)
+            lineNumber += text.substring(to: firstCharacter).filter { $0 == "\n" }.count
+        }
         var glyph = glyphRange.location
         let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedSystemFont(ofSize: 10, weight: .regular), .foregroundColor: NSColor.tertiaryLabelColor]
         while glyph < NSMaxRange(glyphRange) {
@@ -159,10 +218,10 @@ final class LineNumberRulerView: NSRulerView {
             let lineRange = text.lineRange(for: NSRange(location: character, length: 0))
             let lineGlyph = layout.glyphRange(forCharacterRange: lineRange, actualCharacterRange: nil)
             var location = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).origin
-            location.y += textView.textContainerOrigin.y
+            location.y += textView.textContainerOrigin.y - visible.origin.y
             let label = String(lineNumber) as NSString
             let size = label.size(withAttributes: attributes)
-            label.draw(at: NSPoint(x: ruleThickness - size.width - 8, y: location.y), withAttributes: attributes)
+            label.draw(at: NSPoint(x: bounds.width - size.width - 8, y: location.y), withAttributes: attributes)
             glyph = NSMaxRange(lineGlyph)
             lineNumber += 1
         }
