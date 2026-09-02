@@ -252,9 +252,13 @@ public enum ProjectTemplateFactory {
     }
 
     private static let verilogBlinky = """
+    // FPGA Studio Blinky — edit this file and run the simulation to experiment.
     module blinky(input wire CLOCK_50_B5B, output wire LEDG0);
       reg [25:0] counter = 0;
+
       always @(posedge CLOCK_50_B5B) counter <= counter + 1'b1;
+
+      // Try a different counter bit to change the blink rate.
       assign LEDG0 = counter[24];
     endmodule
     """
@@ -273,13 +277,31 @@ public enum ProjectTemplateFactory {
     """
 
     private static let vhdlBlinky = """
+    -- FPGA Studio Blinky — edit this file and run the simulation to experiment.
     library ieee;
     use ieee.std_logic_1164.all;
     use ieee.numeric_std.all;
-    entity blinky is port (CLOCK_50_B5B : in std_logic; LEDG0 : out std_logic); end entity;
-    architecture rtl of blinky is signal counter : unsigned(25 downto 0) := (others => '0');
-    begin process(CLOCK_50_B5B) begin if rising_edge(CLOCK_50_B5B) then counter <= counter + 1; end if; end process;
-    LEDG0 <= counter(24); end architecture;
+
+    entity blinky is
+      port (
+        CLOCK_50_B5B : in std_logic;
+        LEDG0         : out std_logic
+      );
+    end entity;
+
+    architecture rtl of blinky is
+      signal counter : unsigned(25 downto 0) := (others => '0');
+    begin
+      process(CLOCK_50_B5B)
+      begin
+        if rising_edge(CLOCK_50_B5B) then
+          counter <= counter + 1;
+        end if;
+      end process;
+
+      -- Try a different counter bit to change the blink rate.
+      LEDG0 <= counter(24);
+    end architecture;
     """
 
     private static let vhdlBlinkyTest = """

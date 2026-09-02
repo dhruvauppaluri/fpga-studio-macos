@@ -138,6 +138,26 @@ final class LearningPathTests: XCTestCase {
 }
 
 final class TemplateTests: XCTestCase {
+    func testBlinkyTemplatesContainEditableSourceForEveryLanguage() throws {
+        for language in HDLLanguage.allCases {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("fpga-blinky-source-\(language.rawValue)-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: root) }
+
+            let project = try ProjectTemplateFactory.create(.blinky, language: language, name: "Editable Blinky", at: root)
+            guard let source = project.sources.first(where: { !$0.isTestbench }) else {
+                return XCTFail("Blinky must include a synthesizable source file for \(language.displayName)")
+            }
+            let sourceURL = try ProjectStore.resolve(source.path, under: root)
+            let original = try String(contentsOf: sourceURL, encoding: .utf8)
+            XCTAssertFalse(original.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            XCTAssertTrue(original.contains(language == .vhdl ? "entity blinky" : "module blinky"))
+
+            let edited = original + "\n\(language == .vhdl ? "--" : "//") edit smoke test\n"
+            try Data(edited.utf8).write(to: sourceURL, options: .atomic)
+            XCTAssertEqual(try String(contentsOf: sourceURL, encoding: .utf8), edited)
+        }
+    }
+
     func testRV32ITemplateIsScaffoldingNotFinishedCPU() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("fpga-template-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
