@@ -12,15 +12,43 @@ struct WorkspaceView: View {
                 .navigationSplitViewColumnWidth(min: 190, ideal: 230, max: 300)
         } detail: {
             VStack(spacing: 0) {
-                if showLearningGuide { GuidedNextStepView() }
+                if showLearningGuide {
+                    GuidedNextStepView()
+                }
+
                 VSplitView {
                     EditorArea()
-                        .frame(minHeight: 320)
+                        .frame(
+                            minWidth: 0,
+                            maxWidth: .infinity,
+                            minHeight: 320,
+                            maxHeight: .infinity
+                        )
+
                     BottomPanel()
-                        .frame(minHeight: 160, idealHeight: 230)
+                        .frame(
+                            minWidth: 0,
+                            maxWidth: .infinity,
+                            minHeight: 160,
+                            idealHeight: 230,
+                            maxHeight: .infinity
+                        )
                 }
+                .frame(
+                    minWidth: 0,
+                    maxWidth: .infinity,
+                    minHeight: 0,
+                    maxHeight: .infinity
+                )
             }
+            .frame(
+                minWidth: 0,
+                maxWidth: .infinity,
+                minHeight: 0,
+                maxHeight: .infinity
+            )
         }
+
         .inspector(isPresented: $workspace.showingInspector) {
             ProjectInspector()
                 .inspectorColumnWidth(min: 250, ideal: 290, max: 360)
@@ -154,37 +182,104 @@ private struct EditorArea: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Editor tabs + search
             HStack(spacing: 0) {
+                // Tabs are allowed to consume only the space available
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 0) {
                         ForEach(workspace.documents) { document in
-                            Button { workspace.selectedDocumentID = document.id } label: {
+                            Button {
+                                workspace.selectedDocumentID = document.id
+                            } label: {
                                 HStack(spacing: 7) {
-                                    Image(systemName: "doc.text").font(.caption)
+                                    Image(systemName: "doc.text")
+                                        .font(.caption)
+
                                     Text(document.title)
-                                    if document.isDirty { Circle().frame(width: 6, height: 6) }
+                                        .lineLimit(1)
+
+                                    if document.isDirty {
+                                        Circle()
+                                            .frame(width: 6, height: 6)
+                                    }
                                 }
-                                .padding(.horizontal, 13).frame(height: 36)
-                                .background(workspace.selectedDocumentID == document.id ? Color(nsColor: .textBackgroundColor) : .clear)
-                            }.buttonStyle(.plain)
+                                .padding(.horizontal, 13)
+                                .frame(height: 36)
+                                .background(
+                                    workspace.selectedDocumentID == document.id
+                                    ? Color(nsColor: .textBackgroundColor)
+                                    : .clear
+                                )
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
+                    .fixedSize(horizontal: true, vertical: false)
                 }
-                Spacer(minLength: 10)
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Find", text: $workspace.searchText).textFieldStyle(.plain).frame(width: 150).padding(.trailing, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .clipped()
+
+                // Search stays inside the available width
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+
+                    TextField(
+                        "Find",
+                        text: $workspace.searchText
+                    )
+                    .textFieldStyle(.plain)
+                    .frame(minWidth: 80, maxWidth: 150)
+                }
+                .padding(.horizontal, 10)
+                .frame(minWidth: 120)
             }
+            .frame(maxWidth: .infinity)
             .background(.bar)
+
             Divider()
+
             if let document = workspace.selectedDocument {
-                CodeEditor(text: Binding(get: { document.text }, set: { workspace.updateSelectedText($0) }), language: document.language, searchText: workspace.searchText)
-                    .id(document.id)
+                CodeEditor(
+                    text: Binding(
+                        get: { document.text },
+                        set: { workspace.updateSelectedText($0) }
+                    ),
+                    language: document.language,
+                    searchText: workspace.searchText
+                )
+                .id(document.id)
+                .frame(
+                    minWidth: 0,
+                    maxWidth: .infinity,
+                    minHeight: 0,
+                    maxHeight: .infinity
+                )
             } else {
-                ContentUnavailableView("No Source Selected", systemImage: "doc.text", description: Text("Choose a file in the project navigator."))
+                ContentUnavailableView(
+                    "No Source Selected",
+                    systemImage: "doc.text",
+                    description: Text(
+                        "Choose a file in the project navigator."
+                    )
+                )
+                .frame(
+                    minWidth: 0,
+                    maxWidth: .infinity,
+                    minHeight: 0,
+                    maxHeight: .infinity
+                )
             }
         }
+        .frame(
+            minWidth: 0,
+            maxWidth: .infinity,
+            minHeight: 0,
+            maxHeight: .infinity
+        )
     }
 }
+
 
 private struct BottomPanel: View {
     @EnvironmentObject private var workspace: WorkspaceController

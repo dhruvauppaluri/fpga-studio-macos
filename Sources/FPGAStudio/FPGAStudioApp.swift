@@ -63,6 +63,22 @@ struct FPGAStudioApp: App {
 @MainActor
 final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
     static var flashWriteActive = false
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Make sure macOS treats FPGA Studio as a normal foreground app.
+        NSApp.setActivationPolicy(.regular)
+
+        // Activate the application.
+        NSApp.activate(ignoringOtherApps: true)
+
+        // Once SwiftUI has created the WindowGroup window, make it key.
+        DispatchQueue.main.async {
+            if let window = NSApp.windows.first {
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         Self.flashWriteActive ? .terminateCancel : .terminateNow
     }
