@@ -10,7 +10,16 @@ struct CodeEditor: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let textView = NSTextView()
+        // Apple's factory wires the scroll view ↔ text view sizing correctly.
+        let scrollView = NSTextView.scrollableTextView()
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = .textBackgroundColor
+
+        let textView = scrollView.documentView as! NSTextView
         textView.isRichText = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
@@ -22,17 +31,13 @@ struct CodeEditor: NSViewRepresentable {
         textView.textContainerInset = NSSize(width: 10, height: 10)
         textView.delegate = context.coordinator
         textView.string = text
-        textView.autoresizingMask = [.width]
-        textView.textContainer?.widthTracksTextView = true
 
-        let scrollView = NSScrollView()
-        scrollView.documentView = textView
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = true
-        scrollView.autohidesScrollers = true
-        scrollView.borderType = .noBorder
-        scrollView.drawsBackground = true
-        scrollView.backgroundColor = .textBackgroundColor
+        // Non-wrapping code editor: long lines scroll horizontally.
+        textView.isHorizontallyResizable = true
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.widthTracksTextView = false
+
         let ruler = LineNumberRulerView(textView: textView)
         scrollView.verticalRulerView = ruler
         scrollView.hasVerticalRuler = true

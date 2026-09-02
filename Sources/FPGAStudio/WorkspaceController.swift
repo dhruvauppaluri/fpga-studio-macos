@@ -43,12 +43,14 @@ final class WorkspaceController: ObservableObject {
     @Published private(set) var lastValidationSucceeded = false
     @Published private(set) var lastBuildSucceeded = false
     @Published private(set) var lastProgrammedSRAM = false
+    @Published private(set) var lastProgrammedSRAMSHA256: String?
 
     let board: BoardProfile
     private let pipeline = BuildPipeline()
     private let toolchain = ToolchainManager()
     private var operation: Task<Void, Never>?
     private var powerActivity: NSObjectProtocol?
+    private var lastBuildFingerprint: String?
 
     init() {
         do { board = try BundledResources.boardProfile() }
@@ -63,7 +65,8 @@ final class WorkspaceController: ObservableObject {
     var canRun: Bool { project != nil && !isRunning && !(project?.isReadOnly ?? true) }
     var canSimulate: Bool { canRun && !(project?.tests.isEmpty ?? true) }
     var canCancel: Bool { isRunning && stage != .programmingFlash }
-    var canProgramSRAM: Bool { canRun && lastBuildSucceeded && boardConnected }
+    var canProgramSRAM: Bool { canRun && lastBuildSucceeded && boardConnected && board.isSRAMProgrammingValidated }
+    var canProgramFlash: Bool { canRun && board.isFlashProgrammingValidated && lastProgrammedSRAMSHA256 != nil }
     var learningProgress: LearningProgress {
         .init(
             validated: lastValidationSucceeded,
@@ -106,6 +109,8 @@ final class WorkspaceController: ObservableObject {
             lastValidationSucceeded = false
             lastBuildSucceeded = false
             lastProgrammedSRAM = false
+            lastProgrammedSRAMSHA256 = nil
+            lastBuildFingerprint = nil
             boardConnected = false
             waveform = nil
             remember(url)
@@ -124,6 +129,10 @@ final class WorkspaceController: ObservableObject {
         lastValidationSucceeded = false
         lastBuildSucceeded = false
         lastProgrammedSRAM = false
+        lastProgrammedSRAMSHA256 = nil
+        lastBuildFingerprint = nil
+        flashCandidate = nil
+        boardConnected = false
     }
 
     func createProject(template: ProjectTemplate, language: HDLLanguage, name: String, parent: URL) {
@@ -243,20 +252,35 @@ final class WorkspaceController: ObservableObject {
                 case .build:
                     lastValidationSucceeded = true
                     lastBuildSucceeded = true
+                    lastBuildFingerprint = try? ProjectFingerprint.compute(project: project, root: rootURL)
                 case .detectDevice:
                     boardConnected = true
-                case .programSRAM:
+                case .programSRAM(let artifact):
                     lastProgrammedSRAM = true
+                    lastProgrammedSRAMSHA256 = artifact.sha256
                 case .programFlash:
                     break
                 }
             }
-            if !outcome.succeeded { selectedBottomTab = "Issues" }
+            if !outcome.succeeded {
+                selectedBottomTab = "Issues"
+                if action.isProgramming { boardConnected = false }
+            }
             finishOperation()
         }
     }
 
+    func programSRAM() {
+        do {
+            perform(.programSRAM(artifact: try makeProgrammingArtifact()))
+        } catch { lastError = error.localizedDescription }
+    }
+
     func prepareFlash() {
+        guard board.isFlashProgrammingValidated else {
+            lastError = "Persistent flash is locked for the C5G. Upstream marks this board's flash path as not tested, and physical acceptance has not been completed. Use Program SRAM instead."
+            return
+        }
         guard lastBuildSucceeded else {
             lastError = "Build the current design before programming persistent flash."
             return
@@ -265,22 +289,23 @@ final class WorkspaceController: ObservableObject {
             lastError = "Connect and detect the C5G before programming persistent flash."
             return
         }
-        guard let url = latestBitstream else { lastError = FPGAStudioError.noBitstream.localizedDescription; return }
         do {
-            let data = try Data(contentsOf: url, options: [.mappedIfSafe])
-            let values = try url.resourceValues(forKeys: [.contentModificationDateKey])
-            flashCandidate = ProgrammingArtifact(
-                url: url,
-                sha256: SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined(),
-                byteCount: data.count,
-                modifiedAt: values.contentModificationDate ?? Date()
-            )
+            let artifact = try makeProgrammingArtifact()
+            guard lastProgrammedSRAMSHA256 == artifact.sha256 else {
+                lastError = "Test this exact bitstream in SRAM successfully before writing persistent flash."
+                return
+            }
+            flashCandidate = artifact
             showingFlashConfirmation = true
         } catch { lastError = error.localizedDescription }
     }
 
     func confirmFlash() {
         guard let flashCandidate else { lastError = FPGAStudioError.noBitstream.localizedDescription; return }
+        guard board.isFlashProgrammingValidated, lastProgrammedSRAMSHA256 == flashCandidate.sha256 else {
+            lastError = "Flash authorization expired. Detect the board and test this exact bitstream in SRAM again."
+            return
+        }
         showingFlashConfirmation = false
         perform(.programFlash(artifact: flashCandidate))
     }
@@ -404,7 +429,38 @@ final class WorkspaceController: ObservableObject {
         lastValidationSucceeded = false
         lastBuildSucceeded = false
         lastProgrammedSRAM = false
+        lastProgrammedSRAMSHA256 = nil
+        lastBuildFingerprint = nil
+        flashCandidate = nil
         waveform = nil
+    }
+
+    private func makeProgrammingArtifact() throws -> ProgrammingArtifact {
+        guard let project, let rootURL, lastBuildSucceeded, let lastBuildFingerprint else {
+            throw FPGAStudioError.noBitstream
+        }
+        let currentFingerprint = try ProjectFingerprint.compute(project: project, root: rootURL)
+        guard currentFingerprint == lastBuildFingerprint else {
+            invalidateGeneratedResults()
+            throw FPGAStudioError.unsupported("The project changed after the last build. Build it again before programming hardware.")
+        }
+        guard let url = latestBitstream, url.lastPathComponent == "design.rbf" else {
+            throw FPGAStudioError.noBitstream
+        }
+        let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+        guard (HardwareSafetyPolicy.minimumBitstreamBytes...HardwareSafetyPolicy.maximumBitstreamBytes).contains(data.count) else {
+            throw FPGAStudioError.unsupported("The generated bitstream has an unsafe size. Build the project again and inspect the build log.")
+        }
+        let values = try url.resourceValues(forKeys: [.contentModificationDateKey])
+        return ProgrammingArtifact(
+            url: url,
+            sha256: SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined(),
+            byteCount: data.count,
+            modifiedAt: values.contentModificationDate ?? Date(),
+            projectFingerprint: currentFingerprint,
+            boardID: board.id,
+            device: board.device
+        )
     }
 
     private var trustIdentifier: String? {
@@ -433,5 +489,11 @@ private extension BuildAction {
     var isFlash: Bool {
         if case .programFlash(_) = self { return true }
         return false
+    }
+    var isProgramming: Bool {
+        switch self {
+        case .programSRAM, .programFlash: true
+        default: false
+        }
     }
 }

@@ -6,7 +6,7 @@ public enum BuildAction: Sendable {
     case simulate(test: TestTarget)
     case build
     case detectDevice
-    case programSRAM
+    case programSRAM(artifact: ProgrammingArtifact)
     case programFlash(artifact: ProgrammingArtifact)
 }
 
@@ -51,10 +51,10 @@ public actor BuildPipeline {
                 return merge(outcome, validation: diagnostics)
             case .detectDevice:
                 return try await detect(board: board, root: root, onEvent: onEvent)
-            case .programSRAM:
-                return try await program(flash: false, confirmedArtifact: nil, board: board, root: root, buildRoot: buildRoot, onEvent: onEvent)
+            case .programSRAM(let artifact):
+                return try await program(flash: false, artifact: artifact, project: project, board: board, root: root, buildRoot: buildRoot, onEvent: onEvent)
             case .programFlash(let artifact):
-                return try await program(flash: true, confirmedArtifact: artifact, board: board, root: root, buildRoot: buildRoot, onEvent: onEvent)
+                return try await program(flash: true, artifact: artifact, project: project, board: board, root: root, buildRoot: buildRoot, onEvent: onEvent)
             case .validate:
                 fatalError("Handled above")
             }
@@ -152,53 +152,37 @@ public actor BuildPipeline {
         let loader = try locator.require("openFPGALoader")
         onEvent?(.detecting, "Inspecting the C5G JTAG chain\n")
         let result = try await invoke("openFPGALoader", loader, ["-b", board.programmerBoard, "--detect"], root, onEvent)
+        _ = try HardwareSafetyPolicy.validateDetection(result.output, board: board)
         return .init(succeeded: true, stage: .completed, log: result.output, diagnostics: [])
     }
 
-    private func program(flash: Bool, confirmedArtifact: ProgrammingArtifact?, board: BoardProfile, root: URL, buildRoot: URL, onEvent: EventHandler?) async throws -> BuildOutcome {
+    private func program(flash: Bool, artifact: ProgrammingArtifact, project: FPGAProject, board: BoardProfile, root: URL, buildRoot: URL, onEvent: EventHandler?) async throws -> BuildOutcome {
         let loader = try locator.require("openFPGALoader")
-        let release = buildRoot.appendingPathComponent("release")
-        let entries = try FileManager.default.contentsOfDirectory(at: release, includingPropertiesForKeys: [.contentModificationDateKey])
-        let bitstreams = entries.filter { $0.pathExtension.lowercased() == "rbf" }.sorted { lhs, rhs in
-            let leftValues = try? lhs.resourceValues(forKeys: [.contentModificationDateKey])
-            let rightValues = try? rhs.resourceValues(forKeys: [.contentModificationDateKey])
-            let leftDate = leftValues?.contentModificationDate ?? Date.distantPast
-            let rightDate = rightValues?.contentModificationDate ?? Date.distantPast
-            return leftDate > rightDate
-        }
-        guard let newestBitstream = bitstreams.first else { throw FPGAStudioError.noBitstream }
-        let bitstream: URL
-        var temporaryCopy: URL?
         if flash {
-            guard let confirmedArtifact else { throw FPGAStudioError.noBitstream }
-            let releaseRoot = release.standardizedFileURL.resolvingSymlinksInPath().path + "/"
-            let confirmedURL = confirmedArtifact.url.standardizedFileURL.resolvingSymlinksInPath()
-            guard confirmedURL.path.hasPrefix(releaseRoot), confirmedURL.pathExtension.lowercased() == "rbf" else {
-                throw FPGAStudioError.unsafePath(confirmedArtifact.url.path)
+            guard board.isFlashProgrammingValidated else {
+                throw FPGAStudioError.unsupported("Persistent flash is locked for this board because the upstream C5G flash path and this app's hardware acceptance are not validated.")
             }
-            let data = try Data(contentsOf: confirmedURL, options: [.mappedIfSafe])
-            let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-            guard digest.caseInsensitiveCompare(confirmedArtifact.sha256) == .orderedSame,
-                  data.count == confirmedArtifact.byteCount else {
-                throw FPGAStudioError.unsupported("The confirmed bitstream changed after the flash sheet was shown. Confirm it again before programming.")
-            }
-            let copy = FileManager.default.temporaryDirectory.appendingPathComponent("fpga-studio-flash-\(UUID().uuidString).rbf")
-            try data.write(to: copy, options: [.atomic, .completeFileProtection])
-            temporaryCopy = copy
-            bitstream = copy
         } else {
-            bitstream = newestBitstream
+            guard board.isSRAMProgrammingValidated else {
+                throw FPGAStudioError.unsupported("SRAM programming is locked because this board profile has not been hardware validated.")
+            }
         }
-        defer { if let temporaryCopy { try? FileManager.default.removeItem(at: temporaryCopy) } }
+        let release = buildRoot.appendingPathComponent("release")
+        let fingerprint = try ProjectFingerprint.compute(project: project, root: root)
+        let data = try HardwareSafetyPolicy.validateArtifact(artifact, board: board, projectFingerprint: fingerprint, releaseRoot: release)
+        let temporaryCopy = FileManager.default.temporaryDirectory.appendingPathComponent("fpga-studio-program-\(UUID().uuidString).rbf")
+        try data.write(to: temporaryCopy, options: [.atomic, .completeFileProtection])
+        defer { try? FileManager.default.removeItem(at: temporaryCopy) }
         onEvent?(flash ? .programmingFlash : .programmingSRAM, flash ? "Writing persistent EPCQ flash\n" : "Configuring volatile SRAM\n")
-        _ = try await invoke("openFPGALoader", loader, ["-b", board.programmerBoard, "--detect"], root, onEvent)
-        var arguments = ["-b", board.programmerBoard]
-        if flash { arguments.append("--write-flash") }
-        arguments.append(bitstream.path)
+        let preflight = try await invoke("openFPGALoader", loader, ["-b", board.programmerBoard, "--detect"], root, onEvent)
+        _ = try HardwareSafetyPolicy.validateDetection(preflight.output, board: board)
+        var arguments = ["-b", board.programmerBoard, flash ? "--write-flash" : "--write-sram"]
+        if flash { arguments.append("--verify") }
+        arguments.append(temporaryCopy.path)
         let result = try await invoke("openFPGALoader", loader, arguments, root, onEvent)
-        if flash { _ = try await invoke("openFPGALoader", loader, ["-b", board.programmerBoard, "--detect"], root, onEvent) }
-        let reportedPath = confirmedArtifact?.url.path ?? bitstream.path
-        return .init(succeeded: true, stage: .completed, log: result.output, diagnostics: [], artifacts: [.init(kind: flash ? "Programmed flash" : "Programmed SRAM", path: reportedPath, createdAt: Date())])
+        let postflight = try await invoke("openFPGALoader", loader, ["-b", board.programmerBoard, "--detect"], root, onEvent)
+        _ = try HardwareSafetyPolicy.validateDetection(postflight.output, board: board)
+        return .init(succeeded: true, stage: .completed, log: result.output + postflight.output, diagnostics: [], artifacts: [.init(kind: flash ? "Programmed flash" : "Programmed SRAM", path: artifact.url.path, createdAt: Date())])
     }
 
     private func invoke(_ name: String, _ executable: URL, _ arguments: [String], _ directory: URL, _ onEvent: EventHandler?) async throws -> ToolResult {

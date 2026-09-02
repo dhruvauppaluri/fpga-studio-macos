@@ -1,3 +1,4 @@
+import CryptoKit
 import XCTest
 @testable import FPGAStudioCore
 
@@ -166,6 +167,257 @@ final class TemplateTests: XCTestCase {
         let project = try ProjectTemplateFactory.create(.blinky, language: .systemVerilog, name: "Blinky", at: root)
         let issues = ProjectValidator.validate(project: project, root: root, board: try BundledResources.boardProfile())
         XCTAssertFalse(issues.contains { $0.severity == .error }, "\(issues)")
+    }
+}
+
+// MARK: - Hardware Safety Guard Rails
+
+final class HardwareSafetyTests: XCTestCase {
+
+    // MARK: validateDetection
+
+    /// openFPGALoader prints `idcode 0x%x` (no zero-padding).  The C5G's real
+    /// IDCODE 0x02b020dd has a leading-zero nibble, so the tool emits 7 hex
+    /// digits: `idcode 0x2b020dd`.  This must succeed.
+    func testDetectionSucceedsWithUnpaddedIDCode() throws {
+        let board = try BundledResources.boardProfile()
+        let output = """
+        Jtag frequency : requested 6000000Hz -> real 6000000Hz
+        index 0:
+        \tidcode 0x2b020dd
+        \tmanufacturer altera
+        \tfamily cyclone V
+        \tmodel  5CGT*5/5CGX*5
+        \tirlength 10
+        """
+        let device = try HardwareSafetyPolicy.validateDetection(output, board: board)
+        XCTAssertEqual(device.idCode, "0x02b020dd")
+    }
+
+    /// If the IDCODE happens to be zero-padded (e.g. a patched build or future
+    /// openFPGALoader release), the canonical compare must still match.
+    func testDetectionSucceedsWithZeroPaddedIDCode() throws {
+        let board = try BundledResources.boardProfile()
+        let output = """
+        index 0:
+        \tidcode 0x02b020dd
+        \tmanufacturer altera
+        \tfamily cyclone V
+        \tmodel  5CGT*5/5CGX*5
+        \tirlength 10
+        """
+        let device = try HardwareSafetyPolicy.validateDetection(output, board: board)
+        XCTAssertEqual(device.idCode, "0x02b020dd")
+    }
+
+    func testDetectionRejectsWrongIDCode() throws {
+        let board = try BundledResources.boardProfile()
+        let output = """
+        index 0:
+        \tidcode 0xdeadbeef
+        \tmanufacturer altera
+        \tfamily cyclone V
+        \tmodel  5CGT*5/5CGX*5
+        """
+        XCTAssertThrowsError(try HardwareSafetyPolicy.validateDetection(output, board: board)) { error in
+            guard case FPGAStudioError.unsupported(let msg) = error else { return XCTFail("Wrong error type") }
+            XCTAssertTrue(msg.contains("does not match"), msg)
+        }
+    }
+
+    func testDetectionRejectsMultipleDevicesOnChain() throws {
+        let board = try BundledResources.boardProfile()
+        let output = """
+        index 0:
+        \tidcode 0x2b020dd
+        \tmanufacturer altera
+        index 1:
+        \tidcode 0x2b020dd
+        \tmanufacturer altera
+        \tfamily cyclone V
+        \tmodel  5CGT*5/5CGX*5
+        """
+        XCTAssertThrowsError(try HardwareSafetyPolicy.validateDetection(output, board: board)) { error in
+            guard case FPGAStudioError.unsupported(let msg) = error else { return XCTFail("Wrong error type") }
+            XCTAssertTrue(msg.contains("missing or ambiguous"), msg)
+        }
+    }
+
+    func testDetectionRejectsMissingManufacturer() throws {
+        let board = try BundledResources.boardProfile()
+        let output = """
+        index 0:
+        \tidcode 0x2b020dd
+        \tfamily cyclone V
+        \tmodel  5CGT*5/5CGX*5
+        """
+        XCTAssertThrowsError(try HardwareSafetyPolicy.validateDetection(output, board: board)) { error in
+            guard case FPGAStudioError.unsupported(let msg) = error else { return XCTFail("Wrong error type") }
+            XCTAssertTrue(msg.contains("manufacturer"), msg)
+        }
+    }
+
+    func testDetectionRejectsMissingModel() throws {
+        let board = try BundledResources.boardProfile()
+        let output = """
+        index 0:
+        \tidcode 0x2b020dd
+        \tmanufacturer altera
+        \tfamily cyclone V
+        """
+        XCTAssertThrowsError(try HardwareSafetyPolicy.validateDetection(output, board: board)) { error in
+            guard case FPGAStudioError.unsupported(let msg) = error else { return XCTFail("Wrong error type") }
+            XCTAssertTrue(msg.contains("model does not match"), msg)
+        }
+    }
+
+    func testDetectionRejectsEmptyOutput() throws {
+        let board = try BundledResources.boardProfile()
+        XCTAssertThrowsError(try HardwareSafetyPolicy.validateDetection("", board: board)) { error in
+            guard case FPGAStudioError.unsupported(let msg) = error else { return XCTFail("Wrong error type") }
+            XCTAssertTrue(msg.contains("missing or ambiguous"), msg)
+        }
+    }
+
+    // MARK: canonicalIDCode
+
+    func testCanonicalIDCodePadding() {
+        XCTAssertEqual(HardwareSafetyPolicy.canonicalIDCode("0x2b020dd"), "0x02b020dd")
+        XCTAssertEqual(HardwareSafetyPolicy.canonicalIDCode("0x02b020dd"), "0x02b020dd")
+        XCTAssertEqual(HardwareSafetyPolicy.canonicalIDCode("0X02B020DD"), "0x02b020dd")
+        XCTAssertEqual(HardwareSafetyPolicy.canonicalIDCode("2b020dd"), "0x02b020dd")
+        XCTAssertEqual(HardwareSafetyPolicy.canonicalIDCode("0x0"), "0x00000000")
+        XCTAssertNil(HardwareSafetyPolicy.canonicalIDCode(""))
+        XCTAssertNil(HardwareSafetyPolicy.canonicalIDCode("0x"))
+        XCTAssertNil(HardwareSafetyPolicy.canonicalIDCode("notahex"))
+    }
+
+    // MARK: validateArtifact
+
+    private func makeTestArtifact(board: BoardProfile, releaseRoot: URL) throws -> (ProgrammingArtifact, Data) {
+        try FileManager.default.createDirectory(at: releaseRoot, withIntermediateDirectories: true)
+        // A 2 KiB fake bitstream — above the 1 KiB minimum, well below the 64 MiB max
+        let bitstreamData = Data(repeating: 0xAB, count: 2048)
+        let bitstreamURL = releaseRoot.appendingPathComponent("design.rbf")
+        try bitstreamData.write(to: bitstreamURL, options: .atomic)
+        let sha = CryptoKit.SHA256.hash(data: bitstreamData).map { String(format: "%02x", $0) }.joined()
+        let artifact = ProgrammingArtifact(
+            url: bitstreamURL,
+            sha256: sha,
+            byteCount: bitstreamData.count,
+            modifiedAt: Date(),
+            projectFingerprint: "test-fingerprint",
+            boardID: board.id,
+            device: board.device
+        )
+        return (artifact, bitstreamData)
+    }
+
+    func testValidateArtifactAcceptsGoodBitstream() throws {
+        let board = try BundledResources.boardProfile()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("fpga-safety-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let releaseRoot = root.appendingPathComponent("release")
+        let (artifact, expected) = try makeTestArtifact(board: board, releaseRoot: releaseRoot)
+        let data = try HardwareSafetyPolicy.validateArtifact(artifact, board: board, projectFingerprint: "test-fingerprint", releaseRoot: releaseRoot)
+        XCTAssertEqual(data, expected)
+    }
+
+    func testValidateArtifactRejectsWrongBoard() throws {
+        let board = try BundledResources.boardProfile()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("fpga-safety-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let releaseRoot = root.appendingPathComponent("release")
+        var (artifact, _) = try makeTestArtifact(board: board, releaseRoot: releaseRoot)
+        artifact.boardID = "wrong-board"
+        XCTAssertThrowsError(try HardwareSafetyPolicy.validateArtifact(artifact, board: board, projectFingerprint: "test-fingerprint", releaseRoot: releaseRoot))
+    }
+
+    func testValidateArtifactRejectsWrongDevice() throws {
+        let board = try BundledResources.boardProfile()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("fpga-safety-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let releaseRoot = root.appendingPathComponent("release")
+        var (artifact, _) = try makeTestArtifact(board: board, releaseRoot: releaseRoot)
+        artifact.device = "WRONG_DEVICE"
+        XCTAssertThrowsError(try HardwareSafetyPolicy.validateArtifact(artifact, board: board, projectFingerprint: "test-fingerprint", releaseRoot: releaseRoot))
+    }
+
+    func testValidateArtifactRejectsStaleFingerprint() throws {
+        let board = try BundledResources.boardProfile()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("fpga-safety-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let releaseRoot = root.appendingPathComponent("release")
+        let (artifact, _) = try makeTestArtifact(board: board, releaseRoot: releaseRoot)
+        XCTAssertThrowsError(try HardwareSafetyPolicy.validateArtifact(artifact, board: board, projectFingerprint: "different-fingerprint", releaseRoot: releaseRoot))
+    }
+
+    func testValidateArtifactRejectsTamperedBitstream() throws {
+        let board = try BundledResources.boardProfile()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("fpga-safety-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let releaseRoot = root.appendingPathComponent("release")
+        let (artifact, _) = try makeTestArtifact(board: board, releaseRoot: releaseRoot)
+        // Tamper with the file after artifact was constructed
+        try Data(repeating: 0xFF, count: 2048).write(to: artifact.url, options: .atomic)
+        XCTAssertThrowsError(try HardwareSafetyPolicy.validateArtifact(artifact, board: board, projectFingerprint: "test-fingerprint", releaseRoot: releaseRoot))
+    }
+
+    func testValidateArtifactRejectsPathOutsideRelease() throws {
+        let board = try BundledResources.boardProfile()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("fpga-safety-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let releaseRoot = root.appendingPathComponent("release")
+        try FileManager.default.createDirectory(at: releaseRoot, withIntermediateDirectories: true)
+        // Put the bitstream outside the release directory
+        let escapedDir = root.appendingPathComponent("elsewhere")
+        try FileManager.default.createDirectory(at: escapedDir, withIntermediateDirectories: true)
+        let bitstreamData = Data(repeating: 0xAB, count: 2048)
+        let escapedURL = escapedDir.appendingPathComponent("design.rbf")
+        try bitstreamData.write(to: escapedURL, options: .atomic)
+        let sha = CryptoKit.SHA256.hash(data: bitstreamData).map { String(format: "%02x", $0) }.joined()
+        let artifact = ProgrammingArtifact(url: escapedURL, sha256: sha, byteCount: bitstreamData.count, modifiedAt: Date(), projectFingerprint: "fp", boardID: board.id, device: board.device)
+        XCTAssertThrowsError(try HardwareSafetyPolicy.validateArtifact(artifact, board: board, projectFingerprint: "fp", releaseRoot: releaseRoot))
+    }
+
+    func testValidateArtifactRejectsWrongFilename() throws {
+        let board = try BundledResources.boardProfile()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("fpga-safety-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let releaseRoot = root.appendingPathComponent("release")
+        try FileManager.default.createDirectory(at: releaseRoot, withIntermediateDirectories: true)
+        let bitstreamData = Data(repeating: 0xAB, count: 2048)
+        let badNameURL = releaseRoot.appendingPathComponent("evil.rbf")
+        try bitstreamData.write(to: badNameURL, options: .atomic)
+        let sha = CryptoKit.SHA256.hash(data: bitstreamData).map { String(format: "%02x", $0) }.joined()
+        let artifact = ProgrammingArtifact(url: badNameURL, sha256: sha, byteCount: bitstreamData.count, modifiedAt: Date(), projectFingerprint: "fp", boardID: board.id, device: board.device)
+        XCTAssertThrowsError(try HardwareSafetyPolicy.validateArtifact(artifact, board: board, projectFingerprint: "fp", releaseRoot: releaseRoot))
+    }
+
+    func testValidateArtifactRejectsTooSmallBitstream() throws {
+        let board = try BundledResources.boardProfile()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("fpga-safety-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let releaseRoot = root.appendingPathComponent("release")
+        try FileManager.default.createDirectory(at: releaseRoot, withIntermediateDirectories: true)
+        let tiny = Data(repeating: 0xAB, count: 100)  // below 1 KiB minimum
+        let url = releaseRoot.appendingPathComponent("design.rbf")
+        try tiny.write(to: url, options: .atomic)
+        let sha = CryptoKit.SHA256.hash(data: tiny).map { String(format: "%02x", $0) }.joined()
+        let artifact = ProgrammingArtifact(url: url, sha256: sha, byteCount: tiny.count, modifiedAt: Date(), projectFingerprint: "fp", boardID: board.id, device: board.device)
+        XCTAssertThrowsError(try HardwareSafetyPolicy.validateArtifact(artifact, board: board, projectFingerprint: "fp", releaseRoot: releaseRoot))
+    }
+
+    // MARK: IO standard mismatch is now a blocking error
+
+    func testIOStandardMismatchIsError() throws {
+        let board = try BundledResources.boardProfile()
+        // PIN_R20 is CLOCK_50_B5B, validated as "3.3-V LVTTL"
+        let assignment = PinAssignment(signal: "CLOCK_50_B5B", packagePin: "PIN_R20", ioStandard: "2.5 V", line: 1)
+        let issues = QSFParser.validate([assignment], against: board)
+        let mismatch = issues.first { $0.message.contains("uses 2.5 V") }
+        XCTAssertNotNil(mismatch)
+        XCTAssertEqual(mismatch?.severity, .error, "IO standard mismatch must be an error — wrong voltage is an electrical damage vector")
     }
 }
 

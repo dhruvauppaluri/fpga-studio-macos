@@ -213,11 +213,15 @@ public struct BoardProfile: Codable, Hashable, Identifiable, Sendable {
     public var device: String
     public var packageDevice: String
     public var programmerBoard: String
+    public var expectedJTAGIDCodes: [String]?
+    public var expectedJTAGModels: [String]?
+    public var sramProgramming: HardwareCapabilityMaturity?
+    public var flashProgramming: HardwareCapabilityMaturity?
     public var maturity: String
     public var experimentalNotice: String
     public var pins: [BoardPin]
 
-    public init(schemaVersion: Int, id: String, displayName: String, vendor: String, family: String, device: String, packageDevice: String, programmerBoard: String, maturity: String, experimentalNotice: String, pins: [BoardPin]) {
+    public init(schemaVersion: Int, id: String, displayName: String, vendor: String, family: String, device: String, packageDevice: String, programmerBoard: String, expectedJTAGIDCodes: [String]? = nil, expectedJTAGModels: [String]? = nil, sramProgramming: HardwareCapabilityMaturity? = nil, flashProgramming: HardwareCapabilityMaturity? = nil, maturity: String, experimentalNotice: String, pins: [BoardPin]) {
         self.schemaVersion = schemaVersion
         self.id = id
         self.displayName = displayName
@@ -226,10 +230,24 @@ public struct BoardProfile: Codable, Hashable, Identifiable, Sendable {
         self.device = device
         self.packageDevice = packageDevice
         self.programmerBoard = programmerBoard
+        self.expectedJTAGIDCodes = expectedJTAGIDCodes
+        self.expectedJTAGModels = expectedJTAGModels
+        self.sramProgramming = sramProgramming
+        self.flashProgramming = flashProgramming
         self.maturity = maturity
         self.experimentalNotice = experimentalNotice
         self.pins = pins
     }
+
+    public var isSRAMProgrammingValidated: Bool { sramProgramming == .validated }
+    public var isFlashProgrammingValidated: Bool { flashProgramming == .validated }
+}
+
+public enum HardwareCapabilityMaturity: String, Codable, Hashable, Sendable {
+    case validated
+    case experimental
+    case notTested = "not-tested"
+    case unavailable
 }
 
 public struct ToolDescriptor: Codable, Hashable, Identifiable, Sendable {
@@ -304,12 +322,18 @@ public struct ProgrammingArtifact: Codable, Hashable, Sendable {
     public var sha256: String
     public var byteCount: Int
     public var modifiedAt: Date
+    public var projectFingerprint: String
+    public var boardID: String
+    public var device: String
 
-    public init(url: URL, sha256: String, byteCount: Int, modifiedAt: Date) {
+    public init(url: URL, sha256: String, byteCount: Int, modifiedAt: Date, projectFingerprint: String, boardID: String, device: String) {
         self.url = url
         self.sha256 = sha256
         self.byteCount = byteCount
         self.modifiedAt = modifiedAt
+        self.projectFingerprint = projectFingerprint
+        self.boardID = boardID
+        self.device = device
     }
 }
 
