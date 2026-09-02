@@ -49,6 +49,7 @@ struct WorkspaceView: View {
                 minHeight: 0,
                 maxHeight: .infinity
             )
+            .clipped()
         }
 
         .inspector(isPresented: $workspace.showingInspector) {
@@ -281,6 +282,7 @@ private struct EditorArea: View {
             minHeight: 0,
             maxHeight: .infinity
         )
+        .clipped()
     }
 }
 
@@ -291,17 +293,51 @@ private struct BottomPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Picker("Panel", selection: $workspace.selectedBottomTab) {
-                    ForEach(tabs, id: \.self) { Text($0).tag($0) }
+            GeometryReader { geometry in
+                HStack(spacing: 10) {
+                    if geometry.size.width >= 610 {
+                        Picker("Panel", selection: $workspace.selectedBottomTab) {
+                            ForEach(tabs, id: \.self) { Text($0).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .frame(maxWidth: 520)
+                    } else {
+                        Menu {
+                            ForEach(tabs, id: \.self) { tab in
+                                Button {
+                                    workspace.selectedBottomTab = tab
+                                } label: {
+                                    if workspace.selectedBottomTab == tab {
+                                        Label(tab, systemImage: "checkmark")
+                                    } else {
+                                        Text(tab)
+                                    }
+                                }
+                            }
+                        } label: {
+                            Label(workspace.selectedBottomTab, systemImage: panelIcon)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+                    }
+
+                    Spacer(minLength: 0)
+
+                    if workspace.selectedBottomTab == "Issues", geometry.size.width >= 330 {
+                        Text(issueSummary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
                 }
-                .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 520)
-                Spacer()
-                if workspace.selectedBottomTab == "Issues" {
-                    Text("\(workspace.diagnostics.filter { $0.severity == .error }.count) errors · \(workspace.diagnostics.filter { $0.severity == .warning }.count) warnings")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            }.padding(.horizontal, 10).frame(height: 38).background(.bar)
+                .padding(.horizontal, 10)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .frame(height: 38)
+            .background(.bar)
+            .clipped()
             Divider()
             Group {
                 switch workspace.selectedBottomTab {
@@ -312,6 +348,23 @@ private struct BottomPanel: View {
                 default: ProgrammerView()
                 }
             }
+        }
+        .clipped()
+    }
+
+    private var issueSummary: String {
+        let errors = workspace.diagnostics.filter { $0.severity == .error }.count
+        let warnings = workspace.diagnostics.filter { $0.severity == .warning }.count
+        return "\(errors) errors · \(warnings) warnings"
+    }
+
+    private var panelIcon: String {
+        switch workspace.selectedBottomTab {
+        case "Issues": "checkmark.circle"
+        case "Build Log": "text.alignleft"
+        case "Simulation": "waveform.path.ecg"
+        case "Waveform": "waveform"
+        default: "bolt.horizontal.circle"
         }
     }
 }
