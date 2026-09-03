@@ -15,11 +15,15 @@ patterns=(
 )
 
 files=(${(f)"$(git ls-files 2>/dev/null || find . -type f -not -path './.git/*' -not -path './.build/*' -not -path './dist/*')"})
+files=(${files:#scripts/check-secrets.sh})
 (( ${#files} )) || exit 0
 
+# Uses grep -E rather than ripgrep: ripgrep is not preinstalled on the
+# GitHub Actions macos runner this script runs under in CI, and a missing
+# `rg` must not silently turn this into a no-op scan.
 found=0
 for pattern in $patterns; do
-  if rg --line-number --hidden --glob '!scripts/check-secrets.sh' --glob '!.git/**' --glob '!.build/**' --glob '!dist/**' --regexp "$pattern" -- $files; then
+  if grep -InE -- "$pattern" $files; then
     found=1
   fi
 done

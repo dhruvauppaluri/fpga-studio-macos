@@ -55,9 +55,13 @@ open "dist/FPGA Studio.app"
 
 The packaging script creates an ad-hoc signed development app. Set `DEVELOPER_ID_APPLICATION` to a Developer ID Application identity for hardened distribution signing, then use `scripts/notarize-app.sh` with a configured `NOTARY_PROFILE`.
 
-## Collaborating
+## License
 
-The repository is intended to stay private during early hardware validation. Add testers as GitHub collaborators so they can clone it, open issues, and submit pull requests without making the project public. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and verification steps and [SECURITY.md](SECURITY.md) for private vulnerability reporting and credential hygiene.
+FPGA Studio's own source is source-available under an all-rights-reserved license — see [LICENSE](LICENSE). Reading, cloning, and building it locally for personal evaluation and hardware acceptance testing is welcome; redistribution, commercial use, and derivative or competing works require the copyright holder's written permission. Bundled third-party tools keep their own open-source licenses; see [Third-Party Software Notices](THIRD_PARTY_NOTICES.md).
+
+## Reporting and testing
+
+Open a GitHub issue for bugs, feature requests, or to help with hardware acceptance testing. See [CONTRIBUTING.md](CONTRIBUTING.md) for build/test setup and [SECURITY.md](SECURITY.md) for private vulnerability reporting and credential hygiene.
 
 ## Toolchain archive
 
