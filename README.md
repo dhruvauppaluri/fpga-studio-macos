@@ -4,6 +4,12 @@ FPGA Studio is a native Apple-silicon macOS IDE for portable VHDL, Verilog, and 
 
 The app uses Swift 6, SwiftUI, and a TextKit/AppKit source editor. Projects remain ordinary folders with a versioned `fpga-project.json`, QSF constraints, HDL sources, tests, and deterministic artifacts under `.fpga/build`.
 
+## Demo
+
+https://github.com/dhruvauppaluri/fpga-studio-macos/raw/main/Documentation/media/fpga-studio-demo.mp4
+
+*(GitHub doesn't autoplay video in READMEs — click the link above, or download [`Documentation/media/fpga-studio-demo.mp4`](Documentation/media/fpga-studio-demo.mp4) to watch a walkthrough of the editor, simulation, and hardware programming flow.)*
+
 ## Download
 
 Go to **[Releases](../../releases/latest)** and download **FPGA Studio.dmg**. Open the DMG and drag FPGA Studio into Applications — that's it.
@@ -20,7 +26,7 @@ Requires Apple Silicon (M1 or later) and macOS 15 Sequoia or newer.
 
 - Native welcome window, unified toolbar, project navigator, source tabs, inspector, issues, logs, simulation, waveform, and programmer panels.
 - TextKit editing with line numbers, SF Mono, syntax coloring, search, bracket matching, undo, autosave, and clickable diagnostics.
-- Blank HDL, C5G Blinky, and RV32I Lab templates. The RV32I template deliberately contains interfaces, a wrapper, ROM image, and failing directed-test scaffold—not a completed processor.
+- Blank HDL and C5G Blinky project templates.
 - Verilog/SystemVerilog simulation with Icarus, lint with Verilator, VHDL simulation with GHDL, and native VCD parsing/viewing.
 - Mixed-language synthesis through the GHDL-Yosys plugin; mixed-language simulation is not offered in v1.
 - Argument-array-only subprocess execution, sanitized environments, streamed logs, cancellation, and per-project build-directory locking.
@@ -29,6 +35,81 @@ Requires Apple Silicon (M1 or later) and macOS 15 Sequoia or newer.
 - Managed archive import, SHA-256 and optional Ed25519 verification, atomic activation, installed-version activation for rollback, and Homebrew lookup while developing.
 - Adaptive Beginner, Hobbyist, and Professional workspace profiles over one complete feature set. Profiles tune guidance, project recommendations, and technical detail without gating capabilities.
 - A two-minute welcome tour, progressive next-step guide, capability-based toolchain setup, and a searchable plain-language Learn Center.
+
+## Architecture
+
+FPGA Studio is split into a SwiftUI/AppKit UI target (`FPGAStudio`) and a platform-agnostic core library (`FPGAStudioCore`) that owns the project model, build orchestration, and subprocess execution. The UI target never shells out directly — it drives the core library, which talks to the bundled toolchain and, ultimately, the board.
+
+```mermaid
+flowchart TD
+    subgraph UI["FPGAStudio (SwiftUI / AppKit)"]
+        WelcomeView["WelcomeView\nproject creation"]
+        WorkspaceView["WorkspaceView / WorkspaceController\nnavigator, tabs, inspector, logs"]
+        CodeEditor["CodeEditor\nTextKit source editing"]
+        WaveformView["WaveformView\nVCD viewer"]
+        BeginnerExperience["BeginnerExperience\nguide / Learn Center"]
+    end
+
+    subgraph Core["FPGAStudioCore"]
+        ProjectIO["ProjectIO\nproject model, templates, manifest I/O"]
+        Pipeline["Pipeline\nbuild/simulate/program orchestration"]
+        Toolchain["Toolchain\nlocator + sandboxed subprocess execution"]
+        Validation["Validation\nQSF / port / diagnostics checks"]
+        HardwareSafety["HardwareSafety\nSRAM/flash guard rails"]
+        VCD["VCD\nwaveform parsing"]
+    end
+
+    subgraph Tools["Bundled toolchain"]
+        Yosys["Yosys"]
+        NextpnrMistral["nextpnr-mistral / Mistral"]
+        OpenFPGALoader["openFPGALoader"]
+        Icarus["Icarus Verilog"]
+        Verilator["Verilator"]
+        GHDL["GHDL"]
+        GHDLYosys["GHDL-Yosys plugin"]
+    end
+
+    Board["Cyclone V GX Starter Kit\n(JTAG / USB-Blaster)"]
+
+    WelcomeView --> ProjectIO
+    WorkspaceView --> Pipeline
+    WorkspaceView --> Validation
+    CodeEditor --> ProjectIO
+    WaveformView --> VCD
+    BeginnerExperience --> Pipeline
+
+    Pipeline --> Toolchain
+    Pipeline --> HardwareSafety
+    Toolchain --> Yosys
+    Toolchain --> NextpnrMistral
+    Toolchain --> OpenFPGALoader
+    Toolchain --> Icarus
+    Toolchain --> Verilator
+    Toolchain --> GHDL
+    Toolchain --> GHDLYosys
+
+    OpenFPGALoader --> Board
+```
+
+## Technologies used
+
+- **Swift 6** — the app and core library, built with strict concurrency.
+- **SwiftUI** — the welcome window, workspace chrome, inspector, and guided experience.
+- **AppKit / TextKit** — the HDL source editor (line numbers, syntax coloring, bracket matching, clickable diagnostics).
+- **Yosys** — Verilog/SystemVerilog synthesis into a logic-cell netlist.
+- **nextpnr-mistral / Mistral** — place-and-route for the Cyclone V GX target.
+- **openFPGALoader** — programming the board over JTAG/USB-Blaster (SRAM and EPCQ flash).
+- **Icarus Verilog** — Verilog/SystemVerilog simulation.
+- **Verilator** — lint checks on HDL sources.
+- **GHDL** — VHDL simulation.
+- **GHDL-Yosys plugin** — mixed-language (VHDL + Verilog/SystemVerilog) synthesis.
+
+## Key design decisions
+
+- **The toolchain is bundled, not Homebrew-dependent.** A signed archive of every backend ships inside the app and is unpacked into Application Support on first launch, so end users need no terminal commands or manual tool installation.
+- **Subprocess execution is argument-array-only with sanitized environments.** Tools are always invoked with explicit argument arrays (never a shell string) against a restricted environment, which rules out shell-injection and keeps tool execution reproducible.
+- **Cyclone V synthesis avoids hard blocks (M10K, DSP, etc.) in v1.** Upstream Cyclone V support in nextpnr-mistral/Mistral is experimental, so the default synthesis path maps memories and multiplication to logic before ALM mapping rather than relying on unvalidated hard-block inference.
+- **Beginner, Hobbyist, and Professional are profiles over one feature set, not separate apps.** All three share the same project format, safety checks, and capabilities; profiles only tune guidance, recommendations, and how much technical detail is shown by default.
 
 ## Your first project
 
@@ -57,7 +138,7 @@ The packaging script creates an ad-hoc signed development app. Set `DEVELOPER_ID
 
 ## License
 
-FPGA Studio's own source is source-available under an all-rights-reserved license — see [LICENSE](LICENSE). Reading, cloning, and building it locally for personal evaluation and hardware acceptance testing is welcome; redistribution, commercial use, and derivative or competing works require the copyright holder's written permission. Bundled third-party tools keep their own open-source licenses; see [Third-Party Software Notices](THIRD_PARTY_NOTICES.md).
+FPGA Studio's own source is available under the [MIT License](LICENSE). Bundled third-party tools keep their own open-source licenses; see [Third-Party Software Notices](THIRD_PARTY_NOTICES.md).
 
 ## Reporting and testing
 
@@ -105,6 +186,6 @@ Cyclone V support remains experimental upstream. The default synthesis path maps
 
 ## Verification and hardware status
 
-The automated suite covers manifest round trips, safe paths, QSF validation, port directions, diagnostics, VCD parsing, template integrity, shell-injection resistance, real Icarus simulation, and RV32I scaffold compilation.
+The automated suite covers manifest round trips, safe paths, QSF validation, port directions, diagnostics, VCD parsing, template integrity, shell-injection resistance, and real Icarus simulation.
 
-Software build and simulation are verified on arm64 macOS. No physical C5G was available in this workspace, so USB-Blaster detection, SRAM volatility, EPCQ persistence, and a user-authored RV32I hardware deployment are intentionally **not claimed as accepted**. Run those four acceptance steps on the target board before labeling a release hardware-validated.
+Software build and simulation are verified on arm64 macOS. No physical C5G was available in this workspace, so USB-Blaster detection, SRAM volatility, and EPCQ persistence are intentionally **not claimed as accepted**. Run those acceptance steps on the target board before labeling a release hardware-validated.

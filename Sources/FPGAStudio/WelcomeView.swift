@@ -206,7 +206,7 @@ struct NewProjectSheet: View {
                 ForEach(ProjectTemplate.allCases) { item in
                     Button { template = item } label: {
                         VStack(alignment: .leading, spacing: 8) {
-                            Image(systemName: item == .rv32i ? "cpu" : item == .blinky ? "lightbulb" : "doc")
+                            Image(systemName: item == .blinky ? "lightbulb" : "doc")
                                 .font(.title2).foregroundStyle(template == item ? .white : .blue)
                             Text(item.displayName).fontWeight(.semibold)
                             Text(templateBadge(item))
@@ -224,7 +224,6 @@ struct NewProjectSheet: View {
             Picker("Language", selection: $language) {
                 ForEach(HDLLanguage.allCases) { Text($0.displayName).tag($0) }
             }
-            .disabled(template == .rv32i)
             Text(languageHelp)
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
@@ -236,7 +235,7 @@ struct NewProjectSheet: View {
             HStack {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
-                Button(experienceProfile == .beginner && template == .blinky ? "Create and Start Learning" : "Create Project") { workspace.createProject(template: template, language: template == .rv32i ? .systemVerilog : language, name: name, parent: parent) }
+                Button(experienceProfile == .beginner && template == .blinky ? "Create and Start Learning" : "Create Project") { workspace.createProject(template: template, language: language, name: name, parent: parent) }
                     .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || destinationIsUnavailable)
             }
@@ -255,12 +254,11 @@ struct NewProjectSheet: View {
         switch item {
         case .blinky: return "GUIDED EXAMPLE"
         case .blank: return "START FROM SCRATCH"
-        case .rv32i: return "PROCESSOR LAB"
         }
     }
 
     private var languageHelp: String {
-        switch template == .rv32i ? HDLLanguage.systemVerilog : language {
+        switch language {
         case .systemVerilog: "Recommended for new projects. Clear syntax with modern hardware constructs."
         case .verilog: "A widely used, compact hardware description language."
         case .vhdl: "A strongly typed hardware description language common in education and industry."

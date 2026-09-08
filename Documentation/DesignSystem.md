@@ -34,7 +34,7 @@ Profiles are reversible presentation presets. They never hide or disable capabil
 ### Hobbyist
 
 - Balanced presentation with the guide hidden by default but always available.
-- Blank HDL recommended while Blinky and RV32I remain equally accessible.
+- Blank HDL recommended while Blinky remains equally accessible.
 - Direct toolbar actions, waveforms, pin editing, build artifacts, logs, and programming.
 - Advanced backend detail remains opt-in.
 

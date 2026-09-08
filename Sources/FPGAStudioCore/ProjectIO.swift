@@ -89,7 +89,6 @@ public enum ProjectStore {
 public enum ProjectTemplate: String, CaseIterable, Identifiable, Sendable {
     case blank
     case blinky
-    case rv32i
 
     public static let recommendedForBeginners: ProjectTemplate = .blinky
 
@@ -98,14 +97,12 @@ public enum ProjectTemplate: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .blank: "Blank Design"
         case .blinky: "C5G Blinky"
-        case .rv32i: "RV32I Lab"
         }
     }
     public var summary: String {
         switch self {
         case .blank: "A minimal synthesizable top level and testbench."
         case .blinky: "A safe 50 MHz counter driving the first green LED."
-        case .rv32i: "Interfaces and directed tests for a processor you implement."
         }
     }
 }
@@ -131,8 +128,6 @@ public enum ProjectTemplateFactory {
             return try createBlank(language: language, name: name, root: root)
         case .blinky:
             return try createBlinky(language: language, name: name, root: root)
-        case .rv32i:
-            return try createRV32I(name: name, root: root)
         }
     }
 
@@ -218,22 +213,6 @@ public enum ProjectTemplateFactory {
         return project
     }
 
-    private static func createRV32I(name: String, root: URL) throws -> FPGAProject {
-        try write(rv32Core, to: root.appendingPathComponent("rtl/rv32i_core.sv"))
-        try write(rv32Top, to: root.appendingPathComponent("rtl/c5g_top.sv"))
-        try write(rv32Test, to: root.appendingPathComponent("sim/rv32i_core_tb.sv"))
-        try write("00100093\n00200113\n002081b3\n0000006f\n", to: root.appendingPathComponent("sim/program.hex"))
-        try write(rv32QSF, to: root.appendingPathComponent("constraints/c5g.qsf"))
-        try write(rv32Guide, to: root.appendingPathComponent("README.md"))
-        let project = FPGAProject(name: name, top: "c5g_top", sources: [
-            .init(path: "rtl/rv32i_core.sv", language: .systemVerilog),
-            .init(path: "rtl/c5g_top.sv", language: .systemVerilog),
-            .init(path: "sim/rv32i_core_tb.sv", language: .systemVerilog, isTestbench: true)
-        ], tests: [.init(name: "RV32I directed ISA checks", top: "rv32i_core_tb", sources: ["rtl/rv32i_core.sv", "sim/rv32i_core_tb.sv"], language: .systemVerilog)])
-        try ProjectStore.save(project, to: root)
-        return project
-    }
-
     private static func write(_ content: String, to url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try content.data(using: .utf8)!.write(to: url, options: .atomic)
@@ -314,113 +293,4 @@ public enum ProjectTemplateFactory {
     process begin wait for 1 us; std.env.finish; end process; end architecture;
     """
 
-    private static let rv32Core = """
-    module rv32i_core(
-      input  logic        clock,
-      input  logic        reset_n,
-      output logic [31:0] instruction_address,
-      input  logic [31:0] instruction_data,
-      output logic [31:0] data_address,
-      output logic [31:0] data_write,
-      output logic [3:0]  data_write_strobe,
-      input  logic [31:0] data_read,
-      output logic        retired
-    );
-      // Your processor begins here. Suggested milestones:
-      // 1. Program counter and instruction fetch
-      // 2. RV32I decoder and immediate generator
-      // 3. Register file with x0 hard-wired to zero
-      // 4. ALU, branches, loads, stores, and writeback
-      // 5. Retire pulse for the directed testbench
-      always_ff @(posedge clock) begin
-        if (!reset_n) begin
-          instruction_address <= 32'h0;
-          data_address <= 32'h0;
-          data_write <= 32'h0;
-          data_write_strobe <= 4'h0;
-          retired <= 1'b0;
-        end else begin
-          retired <= 1'b0;
-          // TODO: implement your RV32I machine.
-        end
-      end
-    endmodule
-    """
-
-    private static let rv32Top = """
-    module c5g_top(input logic CLOCK_50_B5B, input logic CPU_RESET_n, output logic [7:0] LEDG);
-      logic [31:0] instruction_address, instruction_data;
-      logic [31:0] data_address, data_write, data_read;
-      logic [3:0] data_write_strobe;
-      logic retired;
-      always_comb begin
-        case (instruction_address[3:2])
-          2'd0: instruction_data = 32'h00100093; // addi x1,x0,1
-          2'd1: instruction_data = 32'h00200113; // addi x2,x0,2
-          2'd2: instruction_data = 32'h002081b3; // add x3,x1,x2
-          default: instruction_data = 32'h0000006f; // jal x0,0
-        endcase
-      end
-      assign data_read = 32'h0;
-      assign LEDG = instruction_address[9:2];
-      rv32i_core core(.*,.clock(CLOCK_50_B5B),.reset_n(CPU_RESET_n));
-    endmodule
-    """
-
-    private static let rv32Test = """
-    `timescale 1ns/1ps
-    module rv32i_core_tb;
-      logic clock = 0, reset_n = 0;
-      logic [31:0] instruction_address, instruction_data;
-      logic [31:0] data_address, data_write, data_read = 0;
-      logic [3:0] data_write_strobe; logic retired;
-      logic [31:0] rom [0:3]; integer retire_count = 0;
-      rv32i_core dut(.*);
-      assign instruction_data = rom[instruction_address[3:2]];
-      always #10 clock = ~clock;
-      always @(posedge clock) if (retired) retire_count <= retire_count + 1;
-      initial begin
-        $readmemh("program.hex", rom);
-        $dumpfile("waves.vcd"); $dumpvars(0, rv32i_core_tb);
-        #40 reset_n = 1;
-        #2000;
-        if (retire_count < 3) $fatal(1, "Implement fetch/decode/execute until three instructions retire");
-        $finish;
-      end
-    endmodule
-    """
-
-    private static let rv32QSF = """
-    set_global_assignment -name FAMILY "Cyclone V"
-    set_global_assignment -name DEVICE 5CGXFC5C6F27C7
-    set_global_assignment -name TOP_LEVEL_ENTITY c5g_top
-    set_location_assignment PIN_R20 -to CLOCK_50_B5B
-    set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to CLOCK_50_B5B
-    set_location_assignment PIN_AB24 -to CPU_RESET_n
-    set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to CPU_RESET_n
-    set_location_assignment PIN_L7 -to LEDG[0]
-    set_location_assignment PIN_K6 -to LEDG[1]
-    set_location_assignment PIN_D8 -to LEDG[2]
-    set_location_assignment PIN_E9 -to LEDG[3]
-    set_location_assignment PIN_A5 -to LEDG[4]
-    set_location_assignment PIN_B6 -to LEDG[5]
-    set_location_assignment PIN_H8 -to LEDG[6]
-    set_location_assignment PIN_H9 -to LEDG[7]
-    set_instance_assignment -name IO_STANDARD "2.5 V" -to LEDG[0]
-    set_instance_assignment -name IO_STANDARD "2.5 V" -to LEDG[1]
-    set_instance_assignment -name IO_STANDARD "2.5 V" -to LEDG[2]
-    set_instance_assignment -name IO_STANDARD "2.5 V" -to LEDG[3]
-    set_instance_assignment -name IO_STANDARD "2.5 V" -to LEDG[4]
-    set_instance_assignment -name IO_STANDARD "2.5 V" -to LEDG[5]
-    set_instance_assignment -name IO_STANDARD "2.5 V" -to LEDG[6]
-    set_instance_assignment -name IO_STANDARD "2.5 V" -to LEDG[7]
-    """
-
-    private static let rv32Guide = """
-    # RV32I Lab
-
-    This project intentionally contains no finished processor. Implement `rtl/rv32i_core.sv`, then use the directed simulation target to grow the design instruction by instruction.
-
-    The board wrapper uses logic-only instruction ROM and maps the program counter to the C5G green LEDs. Hard RAM, DSP, transceivers, and PLL inference remain disabled by default because the Mistral Cyclone V backend is experimental.
-    """
 }
