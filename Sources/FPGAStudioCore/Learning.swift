@@ -26,7 +26,7 @@ public enum LearningStep: String, CaseIterable, Codable, Sendable {
         case .build: "Turn the HDL design into a bitstream for the Cyclone V GX."
         case .connect: "Connect the C5G over USB and confirm its JTAG chain."
         case .programSRAM: "Load the design temporarily. Power cycling clears it, so this is the safest first hardware step."
-        case .complete: "Edit the design and repeat the flow, or begin the RV32I lab when you feel ready."
+        case .complete: "Edit the design and repeat the flow, or start a new project when you feel ready."
         }
     }
 }

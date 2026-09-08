@@ -251,29 +251,6 @@ final class TemplateTests: XCTestCase {
         }
     }
 
-    func testRV32ITemplateIsScaffoldingNotFinishedCPU() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("fpga-template-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let project = try ProjectTemplateFactory.create(.rv32i, language: .systemVerilog, name: "RV32 Lab", at: root)
-        XCTAssertEqual(project.top, "c5g_top")
-        let core = try String(contentsOf: root.appendingPathComponent("rtl/rv32i_core.sv"), encoding: .utf8)
-        XCTAssertTrue(core.contains("TODO: implement your RV32I machine"))
-        XCTAssertFalse(core.contains("case (instruction_data[6:0])"))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("sim/program.hex").path))
-    }
-
-    func testRV32ITemplateCompilesWithIcarusWhenAvailable() async throws {
-        let locator = ToolchainLocator(managedRoot: FileManager.default.temporaryDirectory.appendingPathComponent("unused-managed-root"))
-        guard let iverilog = locator.resolve("iverilog") else { throw XCTSkip("Icarus Verilog is not installed") }
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("fpga-rv32-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let project = try ProjectTemplateFactory.create(.rv32i, language: .systemVerilog, name: "RV32 Lab", at: root)
-        let service = ToolProcessService()
-        let files = try project.sources.map { try ProjectStore.resolve($0.path, under: root).path }
-        let result = try await service.run(.init(tool: "Icarus Verilog", executableURL: iverilog, arguments: ["-g2012", "-s", "rv32i_core_tb", "-o", root.appendingPathComponent("rv32-test").path] + files, workingDirectory: root))
-        XCTAssertEqual(result.exitCode, 0, result.output)
-    }
-
     func testBlinkyTemplateValidates() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("fpga-template-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }

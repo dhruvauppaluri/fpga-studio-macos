@@ -8,7 +8,7 @@ Thanks for helping test and improve FPGA Studio. The project currently targets A
 2. Run `swift test`.
 3. Run `swift run FPGAStudio`, or build a signed development bundle with `./scripts/package-app.sh`.
 
-The project is source-available, not open source — see [LICENSE](LICENSE). By submitting a pull request you agree your contribution may be incorporated under those same terms.
+The project is open source under the MIT license — see [LICENSE](LICENSE). By submitting a pull request you agree your contribution is made under that same MIT license.
 
 Icarus Verilog and Verilator enable the integration tests and development simulation flow. Yosys, GHDL with the Yosys plugin, nextpnr-mistral/Mistral, and openFPGALoader are required to exercise the complete Cyclone V build and programming flow.
 
