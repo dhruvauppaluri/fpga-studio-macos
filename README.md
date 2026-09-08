@@ -4,6 +4,12 @@ FPGA Studio is a native Apple-silicon macOS IDE for portable VHDL, Verilog, and 
 
 The app uses Swift 6, SwiftUI, and a TextKit/AppKit source editor. Projects remain ordinary folders with a versioned `fpga-project.json`, QSF constraints, HDL sources, tests, and deterministic artifacts under `.fpga/build`.
 
+## Demo
+
+https://github.com/dhruvauppaluri/fpga-studio-macos/raw/main/Documentation/media/fpga-studio-demo.mp4
+
+*(GitHub doesn't autoplay video in READMEs — click the link above, or download [`Documentation/media/fpga-studio-demo.mp4`](Documentation/media/fpga-studio-demo.mp4) to watch a walkthrough of the editor, simulation, and hardware programming flow.)*
+
 ## Download
 
 Go to **[Releases](../../releases/latest)** and download **FPGA Studio.dmg**. Open the DMG and drag FPGA Studio into Applications — that's it.
